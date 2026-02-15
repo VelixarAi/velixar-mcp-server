@@ -70,6 +70,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["id"],
       },
     },
+    {
+      name: "velixar_list",
+      description: "List memories with pagination support.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max results (default 10)" },
+          cursor: { type: "string", description: "Pagination cursor" },
+        },
+        required: [],
+      },
+    },
+    {
+      name: "velixar_update",
+      description: "Update an existing memory.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Memory ID to update" },
+          content: { type: "string", description: "New content" },
+          tags: { type: "array", items: { type: "string" }, description: "New tags" },
+        },
+        required: ["id"],
+      },
+    },
   ],
 }));
 
@@ -108,6 +133,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const result = await apiRequest(`/memory/${args.id}`, { method: "DELETE" });
       if (result.error) throw new Error(result.error);
       return { content: [{ type: "text", text: `✓ Deleted memory: ${args.id}` }] };
+    }
+
+    if (name === "velixar_list") {
+      const params = new URLSearchParams({ user_id: USER_ID });
+      if (args.limit) params.set("limit", String(args.limit));
+      if (args.cursor) params.set("cursor", args.cursor);
+      const result = await apiRequest(`/memory/list?${params}`);
+      if (result.error) throw new Error(result.error);
+      
+      if (!result.memories?.length) {
+        return { content: [{ type: "text", text: "No memories found." }] };
+      }
+      const memories = result.memories.map((m) => `• ${m.id}: ${m.content.substring(0, 100)}...`).join("\n");
+      const cursor = result.cursor ? `\nNext cursor: ${result.cursor}` : "";
+      return { content: [{ type: "text", text: `Found ${result.count} memories:${cursor}\n${memories}` }] };
+    }
+
+    if (name === "velixar_update") {
+      const body = { user_id: USER_ID };
+      if (args.content) body.content = args.content;
+      if (args.tags) body.tags = args.tags;
+      const result = await apiRequest(`/memory/${args.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+      if (result.error) throw new Error(result.error);
+      return { content: [{ type: "text", text: `✓ Updated memory: ${args.id}` }] };
     }
 
     return { content: [{ type: "text", text: `Unknown tool: ${name}` }] };
