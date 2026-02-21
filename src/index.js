@@ -4,11 +4,15 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
 const API_KEY = process.env.VELIXAR_API_KEY;
-const API_BASE = process.env.VELIXAR_API_URL || "https://t4xrnwgo7f.execute-api.us-east-1.amazonaws.com/v1";
-const USER_ID = process.env.VELIXAR_USER_ID || "kiro-cli";
+const API_BASE = process.env.VELIXAR_API_URL || "https://api.velixarai.com";
+const USER_ID = process.env.VELIXAR_USER_ID || "mcp-user";
+const AUTO_RECALL = process.env.VELIXAR_AUTO_RECALL !== "false"; // on by default
+const RECALL_LIMIT = parseInt(process.env.VELIXAR_RECALL_LIMIT || "10", 10);
 const TIMEOUT_MS = 15000;
 
 if (!API_KEY) {
@@ -43,9 +47,58 @@ async function apiRequest(path, options = {}) {
 }
 
 const server = new Server(
-  { name: "velixar-mcp-server", version: "0.1.3" },
-  { capabilities: { tools: {} } }
+  { name: "velixar-mcp-server", version: "0.2.0" },
+  { capabilities: { tools: {}, resources: {} } }
 );
+
+// ── Auto-recall: expose recent memories as a resource ──
+
+let _recalledMemories = null;
+
+async function fetchRecall() {
+  if (!AUTO_RECALL) return;
+  try {
+    const params = new URLSearchParams({ user_id: USER_ID, limit: String(RECALL_LIMIT) });
+    const result = await apiRequest(`/memory/list?${params}`);
+    _recalledMemories = result.memories || [];
+  } catch {
+    _recalledMemories = [];
+  }
+}
+
+// Fetch on startup (non-blocking)
+fetchRecall();
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  if (!AUTO_RECALL || !_recalledMemories?.length) return { resources: [] };
+  return {
+    resources: [{
+      uri: "velixar://memories/recent",
+      name: "Velixar — Recent Memories",
+      description: `${_recalledMemories.length} most recent memories from your Velixar memory store`,
+      mimeType: "text/plain",
+    }],
+  };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  if (request.params.uri === "velixar://memories/recent") {
+    if (!_recalledMemories) await fetchRecall();
+    const text = (_recalledMemories || []).map((m) => {
+      const tags = m.tags?.length ? ` [${m.tags.join(", ")}]` : "";
+      const tier = m.tier != null ? ` (tier ${m.tier})` : "";
+      return `${m.content}${tags}${tier}`;
+    }).join("\n---\n");
+    return {
+      contents: [{
+        uri: "velixar://memories/recent",
+        mimeType: "text/plain",
+        text: text || "No memories found.",
+      }],
+    };
+  }
+  throw new Error(`Unknown resource: ${request.params.uri}`);
+});
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
