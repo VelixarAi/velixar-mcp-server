@@ -9,6 +9,7 @@ import {
 const API_KEY = process.env.VELIXAR_API_KEY;
 const API_BASE = process.env.VELIXAR_API_URL || "https://t4xrnwgo7f.execute-api.us-east-1.amazonaws.com/v1";
 const USER_ID = process.env.VELIXAR_USER_ID || "kiro-cli";
+const TIMEOUT_MS = 15000;
 
 if (!API_KEY) {
   console.error("VELIXAR_API_KEY environment variable required");
@@ -16,19 +17,33 @@ if (!API_KEY) {
 }
 
 async function apiRequest(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      "authorization": `Bearer ${API_KEY}`,
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-  return res.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "authorization": `Bearer ${API_KEY}`,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`API ${res.status}: ${body.slice(0, 200)}`);
+    }
+    return res.json();
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error(`API timeout after ${TIMEOUT_MS}ms`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const server = new Server(
-  { name: "velixar-mcp-server", version: "0.1.1" },
+  { name: "velixar-mcp-server", version: "0.1.3" },
   { capabilities: { tools: {} } }
 );
 
@@ -42,7 +57,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           content: { type: "string", description: "The memory content to store" },
           tags: { type: "array", items: { type: "string" }, description: "Optional tags for categorization" },
-          tier: { type: "number", description: "Memory tier: 0=pinned, 1=session, 2=semantic, 3=org" },
+          tier: { type: "number", description: "Memory tier: 0=pinned, 1=session, 2=semantic (default), 3=org" },
         },
         required: ["content"],
       },
@@ -61,7 +76,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "velixar_delete",
-      description: "Delete a memory by ID.",
+      description: "Delete a memory by ID. Use velixar_list to find memory IDs first.",
       inputSchema: {
         type: "object",
         properties: {
@@ -72,19 +87,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "velixar_list",
-      description: "List memories with pagination support.",
+      description: "List memories with pagination. Returns full metadata including IDs, tags, salience, and timestamps.",
       inputSchema: {
         type: "object",
         properties: {
           limit: { type: "number", description: "Max results (default 10)" },
-          cursor: { type: "string", description: "Pagination cursor" },
+          cursor: { type: "string", description: "Pagination cursor from previous response" },
         },
         required: [],
       },
     },
     {
       name: "velixar_update",
-      description: "Update an existing memory.",
+      description: "Update an existing memory's content or tags. Use velixar_list to find memory IDs first.",
       inputSchema: {
         type: "object",
         properties: {
@@ -108,12 +123,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         body: JSON.stringify({
           content: args.content,
           user_id: USER_ID,
-          tier: args.tier || 2,
+          tier: args.tier ?? 2,
           tags: args.tags || [],
         }),
       });
       if (result.error) throw new Error(result.error);
-      return { content: [{ type: "text", text: `✓ Stored memory` }] };
+      if (!result.id) throw new Error("Store succeeded but no ID returned");
+      return { content: [{ type: "text", text: `✓ Stored memory (id: ${result.id})` }] };
     }
 
     if (name === "velixar_search") {
@@ -121,11 +137,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (args.limit) params.set("limit", String(args.limit));
       const result = await apiRequest(`/memory/search?${params}`);
       if (result.error) throw new Error(result.error);
-      
+
       if (!result.memories?.length) {
         return { content: [{ type: "text", text: "No memories found." }] };
       }
-      const memories = result.memories.map((m) => `• ${m.content}`).join("\n");
+      const memories = result.memories.map((m) =>
+        `• ${m.content}${m.score ? ` (score: ${m.score})` : ""}`
+      ).join("\n");
       return { content: [{ type: "text", text: `Found ${result.count} memories:\n${memories}` }] };
     }
 
@@ -141,13 +159,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (args.cursor) params.set("cursor", args.cursor);
       const result = await apiRequest(`/memory/list?${params}`);
       if (result.error) throw new Error(result.error);
-      
+
       if (!result.memories?.length) {
         return { content: [{ type: "text", text: "No memories found." }] };
       }
-      const memories = result.memories.map((m) => `• ${m.id}: ${m.content.substring(0, 100)}...`).join("\n");
+      const memories = result.memories.map((m) => {
+        const tags = m.tags?.length ? ` [${m.tags.join(", ")}]` : "";
+        const preview = m.content.length > 120 ? m.content.substring(0, 120) + "…" : m.content;
+        return `• ${m.id}: ${preview}${tags}`;
+      }).join("\n");
       const cursor = result.cursor ? `\nNext cursor: ${result.cursor}` : "";
-      return { content: [{ type: "text", text: `Found ${result.count} memories:${cursor}\n${memories}` }] };
+      return { content: [{ type: "text", text: `${result.count} memories:${cursor}\n${memories}` }] };
     }
 
     if (name === "velixar_update") {
@@ -162,9 +184,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: `✓ Updated memory: ${args.id}` }] };
     }
 
-    return { content: [{ type: "text", text: `Unknown tool: ${name}` }] };
+    return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
   } catch (error) {
-    return { content: [{ type: "text", text: `Error: ${error.message}` }] };
+    return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
   }
 });
 
