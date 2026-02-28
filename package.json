@@ -1,6 +1,6 @@
 {
   "name": "velixar-mcp-server",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "description": "MCP server for Velixar persistent memory — give your AI agents long-term recall",
   "type": "module",
   "bin": {
@@ -28,5 +28,6 @@
   "homepage": "https://velixarai.com",
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.21.0"
-  }
+  },
+  "mcpName": "io.github.VelixarAi/memory"
 }

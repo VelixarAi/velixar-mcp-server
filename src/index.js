@@ -47,7 +47,7 @@ async function apiRequest(path, options = {}) {
 }
 
 const server = new Server(
-  { name: "velixar-mcp-server", version: "0.2.2" },
+  { name: "velixar-mcp-server", version: "0.2.4" },
   { capabilities: { tools: {}, resources: {} } }
 );
 
