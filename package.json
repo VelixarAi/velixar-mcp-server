@@ -1,0 +1,32 @@
+{
+  "name": "velixar-mcp-server",
+  "version": "0.2.2",
+  "description": "MCP server for Velixar persistent memory — give your AI agents long-term recall",
+  "type": "module",
+  "bin": {
+    "velixar-mcp-server": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "memory",
+    "llm",
+    "persistent-memory",
+    "vector-search"
+  ],
+  "author": "Velixar <sdk@velixarai.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VelixarAi/velixar-mcp-server"
+  },
+  "homepage": "https://velixarai.com",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.21.0"
+  }
+}
