@@ -7,12 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm ci
-      - run: npm test
+  ci:
+    uses: velixarai/velixar-ci-workflows/.github/workflows/node-ci.yml@main
+    with:
+      node-version: '20'
