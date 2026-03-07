@@ -11,3 +11,4 @@ jobs:
     uses: velixarai/velixar-ci-workflows/.github/workflows/node-ci.yml@main
     with:
       node-version: '20'
+    secrets: inherit
