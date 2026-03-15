@@ -66,11 +66,17 @@ export async function handleRecallTool(
     const overview = overviewRes.status === 'fulfilled' ? overviewRes.value : null;
     const contradictions = contradictionsRes.status === 'fulfilled' ? contradictionsRes.value : null;
 
-    // Normalize search results
+    // Normalize search results — prefer semantic for context, episodic for evidence
     const relevantFacts = (search?.memories || []).map(m => {
       const mem = normalizeMemory(m as any);
       mem.workspace_id = config.workspaceId;
       return mem;
+    });
+    // Sort: semantic first (context injection), then episodic (evidence citations)
+    relevantFacts.sort((a, b) => {
+      if (a.memory_type === 'semantic' && b.memory_type !== 'semantic') return -1;
+      if (a.memory_type !== 'semantic' && b.memory_type === 'semantic') return 1;
+      return (b.relevance ?? 0) - (a.relevance ?? 0);
     });
 
     // Recent activity from list

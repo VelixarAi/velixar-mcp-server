@@ -40,9 +40,33 @@ export async function handleGraphTool(
       });
       if ((result as any).error) throw new Error((result as any).error);
 
+      // Normalize to GraphEntity schema
+      const nodes = ((result as any).nodes || []).map((n: any) => ({
+        id: n.id || n.address || n.name,
+        entity_type: n.type || n.entity_type || 'unknown',
+        label: n.name || n.label || n.id,
+        properties: { description: n.description, salience: n.salience },
+        relevance: n.salience ?? n.relevance,
+        confidence: n.confidence,
+      }));
+      const relations = ((result as any).edges || []).map((e: any) => ({
+        source: e.source,
+        target: e.target,
+        relationship: e.relationship || e.type || 'related',
+        direction: 'outbound' as const,
+        relevance: e.weight ?? e.relevance,
+        confidence: e.confidence,
+      }));
+      const root = nodes[0] || { id: args.entity, entity_type: 'unknown', label: args.entity as string };
+
       return {
-        text: JSON.stringify(wrapResponse(result, config, {
-          data_absent: !result || Object.keys(result).length === 0,
+        text: JSON.stringify(wrapResponse({
+          root,
+          relations,
+          connected_entities: nodes.slice(1),
+          depth_reached: (result as any).hops ?? 0,
+        }, config, {
+          data_absent: nodes.length === 0,
         })),
       };
     } catch (e) {

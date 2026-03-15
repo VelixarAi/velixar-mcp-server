@@ -13,11 +13,17 @@ export const cognitiveTools: Tool[] = [
     description:
       'User profile — preferences, expertise, communication style, recurring goals, stable constraints. ' +
       'Use when you need to understand who the user is, personalize responses, or check stable preferences. ' +
+      'Supports get (default), store (save new identity facet), and update (modify existing). ' +
       'Do NOT use for project facts (use velixar_search). Do NOT use for broad orientation (use velixar_context). ' +
-      'Identity is workspace-scoped — each project can have different user context.',
+      'Identity is workspace-scoped — each project can have different user context. ' +
+      'Will not silently generalize workspace-local identity to global.',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        action: { type: 'string', enum: ['get', 'store', 'update'], description: 'Action (default: get)' },
+        field: { type: 'string', description: 'Identity field to store/update (e.g. "expertise", "communication_style")' },
+        value: { description: 'Value to store/update (string or array of strings)' },
+      },
     },
   },
   {
@@ -74,6 +80,33 @@ export async function handleCognitiveTool(
   config: ApiConfig,
 ): Promise<{ text: string; isError?: boolean }> {
   if (name === 'velixar_identity') {
+    const action = (args.action as string) || 'get';
+
+    // Store or update: persist identity facet as a tagged memory
+    if (action === 'store' || action === 'update') {
+      const field = args.field as string;
+      const value = args.value;
+      if (!field || value === undefined) throw new Error('field and value required for store/update');
+
+      // Store as semantic memory tagged with identity field
+      const content = `[identity:${field}] ${typeof value === 'string' ? value : JSON.stringify(value)}`;
+      await api.post('/memory', {
+        content,
+        user_id: config.userId,
+        tier: 0, // pinned — identity is durable
+        tags: ['identity', `identity:${field}`],
+        author: { type: 'user' },
+      });
+
+      return {
+        text: JSON.stringify(wrapResponse(
+          { action, field, value, message: `Identity field "${field}" ${action}d` },
+          config,
+        )),
+      };
+    }
+
+    // Get: fetch synthesized identity profile
     const result = await api.get<Record<string, unknown>>('/memory/identity', true);
     const identity = (result as any).identity || {};
     const profile = {
@@ -94,10 +127,11 @@ export async function handleCognitiveTool(
         severity: c.severity,
       })),
       snapshot_count: (result as any).snapshot_count || 0,
+      workspace_scope: 'workspace_local',
       justification: justify(
         'User identity profile synthesized from stored preferences and behavioral patterns',
         Object.keys(identity).length > 0 ? 'synthesized_summary' : 'hypothesis',
-        [],  // identity endpoint doesn't return raw memories
+        [],
         config.workspaceId,
         { contradictionCount: ((result as any).contradictions || []).length },
       ),
