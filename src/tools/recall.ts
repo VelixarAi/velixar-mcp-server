@@ -5,7 +5,8 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
 import { normalizeMemory, wrapResponse } from '../api.js';
-import type { ApiConfig } from '../types.js';
+import type { ApiConfig, MemoryItem } from '../types.js';
+import { justify } from '../justify.js';
 
 export const recallTools: Tool[] = [
   {
@@ -97,6 +98,15 @@ export async function handleRecallTool(
       open_issues: openContradictions,
       contradiction_count: openContradictions.length,
       pattern_hints: [] as string[],
+      justification: justify(
+        overview
+          ? `Workspace context synthesis from ${(overview as any).total_memories || 0} memories`
+          : `Context synthesis from ${relevantFacts.length} relevant facts`,
+        'synthesized_summary',
+        relevantFacts as MemoryItem[],
+        config.workspaceId,
+        { contradictionCount: openContradictions.length },
+      ),
     };
 
     const partial = [searchRes, listRes, overviewRes, contradictionsRes].some(r => r.status === 'rejected');

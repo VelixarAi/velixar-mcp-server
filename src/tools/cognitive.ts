@@ -4,7 +4,8 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
 import { normalizeMemory, wrapResponse } from '../api.js';
-import type { ApiConfig } from '../types.js';
+import type { ApiConfig, MemoryItem } from '../types.js';
+import { justify } from '../justify.js';
 
 export const cognitiveTools: Tool[] = [
   {
@@ -93,6 +94,13 @@ export async function handleCognitiveTool(
         severity: c.severity,
       })),
       snapshot_count: (result as any).snapshot_count || 0,
+      justification: justify(
+        'User identity profile synthesized from stored preferences and behavioral patterns',
+        Object.keys(identity).length > 0 ? 'synthesized_summary' : 'hypothesis',
+        [],  // identity endpoint doesn't return raw memories
+        config.workspaceId,
+        { contradictionCount: ((result as any).contradictions || []).length },
+      ),
     };
 
     return {
@@ -124,7 +132,17 @@ export async function handleCognitiveTool(
 
     return {
       text: JSON.stringify(wrapResponse(
-        { contradictions: items, count: items.length },
+        {
+          contradictions: items,
+          count: items.length,
+          justification: justify(
+            `${items.length} contradiction${items.length !== 1 ? 's' : ''} detected in workspace`,
+            items.length > 0 ? 'retrieved_fact' : 'synthesized_summary',
+            [],
+            config.workspaceId,
+            { contradictionCount: items.length },
+          ),
+        },
         config,
         { data_absent: items.length === 0, contradictions_present: items.length > 0 },
       )),
@@ -211,7 +229,16 @@ export async function handleCognitiveTool(
 
     return {
       text: JSON.stringify(wrapResponse(
-        { patterns, count: patterns.length },
+        {
+          patterns,
+          count: patterns.length,
+          justification: justify(
+            `${patterns.length} recurring pattern${patterns.length !== 1 ? 's' : ''} identified`,
+            patterns.length > 0 ? 'pattern_inference' : 'hypothesis',
+            [],
+            config.workspaceId,
+          ),
+        },
         config,
         { data_absent: patterns.length === 0 },
       )),
