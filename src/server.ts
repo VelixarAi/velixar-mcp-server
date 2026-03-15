@@ -15,6 +15,10 @@ import {
 import { loadConfig, ApiClient } from './api.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
 import { systemTools, handleSystemTool } from './tools/system.js';
+import { recallTools, handleRecallTool } from './tools/recall.js';
+import { graphTools, handleGraphTool } from './tools/graph.js';
+import { cognitiveTools, handleCognitiveTool } from './tools/cognitive.js';
+import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
 import { fetchRecall, getResourceList, readResource, getResourceUris } from './resources.js';
 
 // ── Init ──
@@ -22,16 +26,22 @@ import { fetchRecall, getResourceList, readResource, getResourceUris } from './r
 const config = loadConfig();
 const api = new ApiClient(config);
 
-const allTools = [...memoryTools, ...systemTools];
+const allTools = [...memoryTools, ...recallTools, ...graphTools, ...cognitiveTools, ...lifecycleTools, ...systemTools];
 const allToolNames = allTools.map(t => t.name);
 
-const memoryToolNames = new Set(memoryTools.map(t => t.name));
+const toolHandlers: Array<{ names: Set<string>; handler: typeof handleMemoryTool }> = [
+  { names: new Set(memoryTools.map(t => t.name)), handler: handleMemoryTool },
+  { names: new Set(recallTools.map(t => t.name)), handler: handleRecallTool },
+  { names: new Set(graphTools.map(t => t.name)), handler: handleGraphTool },
+  { names: new Set(cognitiveTools.map(t => t.name)), handler: handleCognitiveTool },
+  { names: new Set(lifecycleTools.map(t => t.name)), handler: handleLifecycleTool },
+];
 const systemToolNames = new Set(systemTools.map(t => t.name));
 
 // ── Server ──
 
 const server = new Server(
-  { name: 'velixar-mcp-server', version: '0.3.0' },
+  { name: 'velixar-mcp-server', version: '0.4.0' },
   { capabilities: { tools: {}, resources: {} } },
 );
 
@@ -52,18 +62,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     let result: { text: string; isError?: boolean };
 
-    if (memoryToolNames.has(name)) {
-      result = await handleMemoryTool(name, args as Record<string, unknown>, api, config);
-    } else if (systemToolNames.has(name)) {
+    if (systemToolNames.has(name)) {
       result = await handleSystemTool(name, args as Record<string, unknown>, api, config, allToolNames, getResourceUris());
     } else {
-      return {
-        content: [{
-          type: 'text' as const,
-          text: `Unknown tool: ${name}\n\nNote: Velixar MCP tools are only available in the primary agent context. If you're seeing this in a subagent, memory operations must be handled by the primary agent.`,
-        }],
-        isError: true,
-      };
+      const entry = toolHandlers.find(h => h.names.has(name));
+      if (!entry) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Unknown tool: ${name}\n\nNote: Velixar MCP tools are only available in the primary agent context. If you're seeing this in a subagent, memory operations must be handled by the primary agent.`,
+          }],
+          isError: true,
+        };
+      }
+      result = await entry.handler(name, args as Record<string, unknown>, api, config);
     }
 
     return {
