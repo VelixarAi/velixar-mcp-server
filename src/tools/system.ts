@@ -3,10 +3,11 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
+import { wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
 import { getTimings, getRetryStats } from '../api.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 export const systemTools: Tool[] = [
   {
@@ -43,29 +44,31 @@ export async function handleSystemTool(
   if (name === 'velixar_health') {
     const start = Date.now();
     try {
-      const result = await api.get<{ status?: string }>('/health');
+      const result = await api.get<{ status?: string; qdrant?: boolean; redis?: boolean; search?: boolean }>('/health');
       const latency = Date.now() - start;
       return {
-        text: JSON.stringify({
+        text: JSON.stringify(wrapResponse({
           connected: true,
           workspace_id: config.workspaceId || '(from API key)',
-          workspace_source: config.workspaceSource,
           backend_reachable: true,
           backend_status: result.status || 'ok',
+          qdrant: result.qdrant,
+          redis: result.redis,
+          search: result.search,
           latency_ms: latency,
           version: VERSION,
-        }, null, 2),
+        }, config, { request_ms: latency })),
       };
     } catch (e) {
       return {
-        text: JSON.stringify({
+        text: JSON.stringify(wrapResponse({
           connected: false,
           workspace_id: config.workspaceId || '(from API key)',
-          workspace_source: config.workspaceSource,
           backend_reachable: false,
           error: (e as Error).message,
           version: VERSION,
-        }, null, 2),
+        }, config)),
+        isError: true,
       };
     }
   }
@@ -74,11 +77,9 @@ export async function handleSystemTool(
     const timings = getTimings();
     const stats = getRetryStats();
     const timingMap: Record<string, number> = {};
-    for (const t of timings) {
-      timingMap[t.endpoint] = t.duration_ms;
-    }
+    for (const t of timings) timingMap[t.endpoint] = t.duration_ms;
     return {
-      text: JSON.stringify({
+      text: JSON.stringify(wrapResponse({
         workspace_id: config.workspaceId || '(from API key)',
         workspace_source: config.workspaceSource,
         debug_mode: config.debug,
@@ -87,28 +88,28 @@ export async function handleSystemTool(
         retry_count: stats.retryCount,
         fallback_count: stats.fallbackCount,
         version: VERSION,
-      }, null, 2),
+      }, config)),
     };
   }
 
   if (name === 'velixar_capabilities') {
     return {
-      text: JSON.stringify({
+      text: JSON.stringify(wrapResponse({
         tools: toolNames,
         resources: resourceUris,
         prompts: [],
         features: {
           workspace_isolation: true,
-          identity: false,       // Phase 2
-          graph: false,          // Phase 2
-          contradictions: false, // Phase 2
-          timeline: false,       // Phase 2
-          patterns: false,       // Phase 2
-          distill: false,        // Phase 2
-          justification: false,  // Phase 2
+          identity: true,
+          graph: true,
+          contradictions: true,
+          timeline: true,
+          patterns: true,
+          distill: true,
+          justification: false,
         },
         version: VERSION,
-      }, null, 2),
+      }, config)),
     };
   }
 

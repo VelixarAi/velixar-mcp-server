@@ -33,17 +33,31 @@ export async function handleGraphTool(
   config: ApiConfig,
 ): Promise<{ text: string; isError?: boolean }> {
   if (name === 'velixar_graph_traverse') {
-    const result = await api.post<Record<string, unknown>>('/graph/traverse', {
-      entity: args.entity,
-      max_hops: Math.min((args.depth as number) || 2, 10),
-    });
-    if ((result as any).error) throw new Error((result as any).error);
+    try {
+      const result = await api.post<Record<string, unknown>>('/graph/traverse', {
+        entity: args.entity,
+        max_hops: Math.min((args.depth as number) || 2, 10),
+      });
+      if ((result as any).error) throw new Error((result as any).error);
 
-    return {
-      text: JSON.stringify(wrapResponse(result, config, {
-        data_absent: !result || Object.keys(result).length === 0,
-      })),
-    };
+      return {
+        text: JSON.stringify(wrapResponse(result, config, {
+          data_absent: !result || Object.keys(result).length === 0,
+        })),
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('404') || msg.includes('not found')) {
+        return {
+          text: JSON.stringify(wrapResponse(
+            { nodes: [], edges: [], hops: 0, entity: args.entity, message: 'Entity not found in knowledge graph' },
+            config,
+            { data_absent: true },
+          )),
+        };
+      }
+      throw e;
+    }
   }
 
   throw new Error(`Unknown graph tool: ${name}`);
