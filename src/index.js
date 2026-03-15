@@ -218,8 +218,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       const memories = result.memories.map((m) => {
         const tags = m.tags?.length ? ` [${m.tags.join(", ")}]` : "";
+        const ts = m.created_at ? ` (${m.created_at})` : "";
         const preview = m.content.length > 120 ? m.content.substring(0, 120) + "…" : m.content;
-        return `• ${m.id}: ${preview}${tags}`;
+        return `• ${m.id}${ts}: ${preview}${tags}`;
       }).join("\n");
       const cursor = result.cursor ? `\nNext cursor: ${result.cursor}` : "";
       return { content: [{ type: "text", text: `${result.count} memories:${cursor}\n${memories}` }] };
