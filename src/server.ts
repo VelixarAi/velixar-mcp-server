@@ -19,7 +19,7 @@ import { recallTools, handleRecallTool } from './tools/recall.js';
 import { graphTools, handleGraphTool } from './tools/graph.js';
 import { cognitiveTools, handleCognitiveTool } from './tools/cognitive.js';
 import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
-import { fetchRecall, getResourceList, readResource, getResourceUris } from './resources.js';
+import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity } from './resources.js';
 
 // ── Init ──
 
@@ -41,7 +41,7 @@ const systemToolNames = new Set(systemTools.map(t => t.name));
 // ── Server ──
 
 const server = new Server(
-  { name: 'velixar-mcp-server', version: '0.4.0' },
+  { name: 'velixar-mcp-server', version: '0.5.0' },
   { capabilities: { tools: {}, resources: {} } },
 );
 

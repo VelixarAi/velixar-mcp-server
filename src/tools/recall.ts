@@ -129,7 +129,14 @@ export async function handleRecallTool(
     const mem = normalizeMemory(result.memory as any);
     mem.workspace_id = config.workspaceId;
 
-    return { text: JSON.stringify(wrapResponse({ memory: mem }, config)) };
+    const justification = justify(
+      `Inspection of memory ${id}`,
+      'retrieved_fact',
+      [mem] as MemoryItem[],
+      config.workspaceId,
+    );
+
+    return { text: JSON.stringify(wrapResponse({ memory: mem, justification }, config)) };
   }
 
   throw new Error(`Unknown recall tool: ${name}`);

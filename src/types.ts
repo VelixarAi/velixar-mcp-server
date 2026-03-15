@@ -12,6 +12,7 @@ export interface ResponseMeta {
   staleness: 'fresh' | 'recent' | 'stale';
   contradictions_present: boolean;
   data_absent: boolean;
+  absence_reason?: AbsenceReason;
   partial_context: boolean;
   request_ms: number;
   cached?: boolean;
@@ -274,6 +275,16 @@ export interface CapabilitiesResult {
   };
   security_mode?: string;
 }
+
+// ── Absence Semantics ──
+
+export type AbsenceReason =
+  | 'no_data'           // No memories exist for this query/workspace
+  | 'low_confidence'    // Data exists but confidence too low to surface
+  | 'partial'           // Some data found, but incomplete coverage
+  | 'conflict'          // Contradictory data prevents a clear answer
+  | 'stale'             // Data exists but exceeds freshness threshold
+  | 'backend_error';    // Backend unreachable, no cached fallback
 
 // ── API Client Types ──
 
