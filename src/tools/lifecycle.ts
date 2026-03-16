@@ -177,13 +177,15 @@ export const lifecycleTools: Tool[] = [
     description:
       'Merge related episodic memories into a single semantic memory. ' +
       'Preserves originals as provenance. Use when multiple episodic memories cover the same topic and should be unified. ' +
-      'Provide memory IDs to consolidate, or a topic to auto-find candidates.',
+      'Provide memory IDs to consolidate, or a topic to auto-find candidates. ' +
+      'Set preview=true to see what would be merged without executing.',
     inputSchema: {
       type: 'object',
       properties: {
         memory_ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs to consolidate' },
         topic: { type: 'string', description: 'Topic to auto-find consolidation candidates' },
         summary: { type: 'string', description: 'Optional: provide the consolidated summary (otherwise auto-generated)' },
+        preview: { type: 'boolean', description: 'Preview mode — show what would be merged without executing (default: false)' },
       },
     },
   },
@@ -260,6 +262,7 @@ export async function handleLifecycleTool(
       : [...autoTags(content), 'distilled'];
 
     // Duplicate detection: search for similar content before storing
+    // H20: Adaptive threshold — shorter content needs higher similarity to be a true duplicate
     let duplicateDetected = false;
     let contradictionDetected = false;
     const contradictionsFound: string[] = [];
@@ -274,8 +277,11 @@ export async function handleLifecycleTool(
         `/memory/search?${searchParams}`, true,
       );
       const topMatch = existing.memories?.[0];
-      if (topMatch && typeof (topMatch as Record<string, unknown>).score === 'number' && (topMatch as Record<string, unknown>).score as number > 0.92) {
-        duplicateDetected = true;
+      if (topMatch && typeof (topMatch as Record<string, unknown>).score === 'number') {
+        const score = (topMatch as Record<string, unknown>).score as number;
+        // Shorter content → higher threshold (short strings match too easily)
+        const threshold = content.length < 100 ? 0.96 : content.length < 300 ? 0.94 : 0.92;
+        if (score > threshold) duplicateDetected = true;
       }
     } catch { /* non-blocking */ }
 
@@ -319,6 +325,17 @@ export async function handleLifecycleTool(
 
     if (result.error) throw new Error(result.error);
 
+    // H15/H27: Distillation quality scoring
+    const words = content.split(/\s+/).length;
+    const hasSpecifics = /\b(decided|chose|because|prefer|always|never|bug|fix|error|version|v\d)\b/i.test(content);
+    const qualityIssues: string[] = [];
+    if (words < 5) qualityIssues.push('too_short');
+    if (words > 500) qualityIssues.push('too_long_for_single_memory');
+    if (!hasSpecifics) qualityIssues.push('low_specificity');
+    // H27: Completeness — if source_ids provided, flag that we can't verify extraction coverage
+    if (sourceIds.length > 0) qualityIssues.push('completeness_unverified');
+    const qualityScore = Math.max(0, 1 - qualityIssues.length * 0.25);
+
     return {
       text: JSON.stringify(wrapResponse({
         candidates: [{
@@ -328,6 +345,7 @@ export async function handleLifecycleTool(
           stored_id: result.id, derived_from: sourceIds,
         }],
         stored_count: 1, skipped_count: 0, contradictions_found: contradictionsFound,
+        quality: { score: qualityScore, issues: qualityIssues, word_count: words },
       }, config)),
     };
   }
@@ -635,14 +653,19 @@ export async function handleLifecycleTool(
         id: val?.id as string | undefined,
         deduplicated: val?.deduplicated === true,
         error: r.status === 'rejected' ? String(r.reason) : val?.error ? String(val.error) : undefined,
+        // H25: Include content preview on failures so client knows what to retry
+        ...(r.status === 'rejected' || val?.error ? { content_preview: items[i].content.slice(0, 80) } : {}),
       };
     });
 
+    const failed = statuses.filter(s => s.status === 'error');
     return {
       text: JSON.stringify(wrapResponse({
         items: statuses,
         stored_count: statuses.filter(s => s.status === 'ok').length,
-        error_count: statuses.filter(s => s.status === 'error').length,
+        error_count: failed.length,
+        // H25: Retry guidance
+        ...(failed.length ? { retry_hint: `${failed.length} item(s) failed. Retry only the failed indices: [${failed.map(f => f.index).join(', ')}]` } : {}),
       }, config)),
     };
   }
@@ -673,7 +696,8 @@ export async function handleLifecycleTool(
   if (name === 'velixar_consolidate') {
     const memoryIds = args.memory_ids as string[] | undefined;
     const topic = args.topic as string | undefined;
-    let providedSummary = args.summary as string | undefined;
+    const providedSummary = args.summary as string | undefined;
+    const preview = args.preview === true;
 
     // Find candidates: either by IDs or by topic search
     let candidates: Array<{ id: string; content: string; tags: string[] }> = [];
@@ -707,6 +731,27 @@ export async function handleLifecycleTool(
     // Build consolidated summary
     const summary = providedSummary || candidates.map(c => c.content).join(' | ');
     const allTags = [...new Set(candidates.flatMap(c => c.tags).concat(['consolidated']))];
+
+    // H26: Preview mode — show what would be merged without executing
+    if (preview) {
+      // Identify unique details per memory that might be lost in consolidation
+      const uniqueDetails = candidates.map(c => {
+        const otherContent = candidates.filter(o => o.id !== c.id).map(o => o.content).join(' ');
+        const words = c.content.split(/\s+/);
+        const unique = words.filter(w => w.length > 4 && !otherContent.toLowerCase().includes(w.toLowerCase()));
+        return { id: c.id, preview: c.content.slice(0, 120), unique_terms: unique.slice(0, 10), tag_count: c.tags.length };
+      });
+      return {
+        text: JSON.stringify(wrapResponse({
+          preview: true,
+          source_count: candidates.length,
+          sources: uniqueDetails,
+          proposed_summary: summary.slice(0, 500),
+          proposed_tags: allTags,
+          nuance_risk: uniqueDetails.some(d => d.unique_terms.length > 3) ? 'Some memories contain unique details that may be lost in consolidation' : 'Low risk — memories are highly overlapping',
+        }, config)),
+      };
+    }
 
     // Store consolidated semantic memory
     const stored = await api.post<{ id?: string; error?: string }>('/memory', {

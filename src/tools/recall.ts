@@ -161,6 +161,20 @@ export async function handleRecallTool(
     });
     mem.workspace_id = config.workspaceId;
 
+    // H17: Validate provenance — check derived_from IDs exist
+    let provenanceStatus: Array<{ id: string; status: 'exists' | 'deleted' }> | undefined;
+    if (mem.provenance.derived_from?.length) {
+      const checks = await Promise.allSettled(
+        mem.provenance.derived_from.map(refId =>
+          api.get<{ memory?: Record<string, unknown> }>(`/memory/${refId}`, true),
+        ),
+      );
+      provenanceStatus = mem.provenance.derived_from.map((refId, i) => ({
+        id: refId,
+        status: (checks[i].status === 'fulfilled' && (checks[i] as PromiseFulfilledResult<{ memory?: Record<string, unknown> }>).value.memory) ? 'exists' as const : 'deleted' as const,
+      }));
+    }
+
     const justification = justify(
       `Inspection of memory ${id}`,
       'retrieved_fact',
@@ -168,7 +182,7 @@ export async function handleRecallTool(
       config.workspaceId,
     );
 
-    return { text: JSON.stringify(wrapResponse({ memory: mem, justification }, config)) };
+    return { text: JSON.stringify(wrapResponse({ memory: mem, justification, ...(provenanceStatus ? { provenance_validation: provenanceStatus } : {}) }, config)) };
   }
 
   throw new Error(`Unknown recall tool: ${name}`);
