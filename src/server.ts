@@ -22,7 +22,7 @@ import { graphTools, handleGraphTool } from './tools/graph.js';
 import { cognitiveTools, handleCognitiveTool } from './tools/cognitive.js';
 import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
 import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity, refreshRelevantMemories, markToolCall, isRelevantStale } from './resources.js';
-import { getPromptList, getPrompt } from './prompts.js';
+import { getPromptList, getPrompt, allPrompts } from './prompts.js';
 
 // ── Init ──
 
@@ -71,7 +71,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     let result: { text: string; isError?: boolean };
 
     if (systemToolNames.has(name)) {
-      result = await handleSystemTool(name, args as Record<string, unknown>, api, config, allToolNames, getResourceUris());
+      result = await handleSystemTool(name, args as Record<string, unknown>, api, config, allToolNames, getResourceUris(), allPrompts.map(p => p.name));
     } else {
       const entry = toolHandlers.find(h => h.names.has(name));
       if (!entry) {

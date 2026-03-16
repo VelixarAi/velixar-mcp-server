@@ -107,6 +107,41 @@ export function getRetryStats() {
   return { retryCount, fallbackCount };
 }
 
+// ── Circuit Breaker ──
+
+const CIRCUIT_THRESHOLD = 5;    // failures before opening
+const CIRCUIT_RESET_MS = 30_000; // 30s before half-open
+
+let circuitFailures = 0;
+let circuitOpenedAt = 0;
+
+function isCircuitOpen(): boolean {
+  if (circuitFailures < CIRCUIT_THRESHOLD) return false;
+  if (Date.now() - circuitOpenedAt > CIRCUIT_RESET_MS) {
+    // Half-open: allow one attempt
+    circuitFailures = CIRCUIT_THRESHOLD - 1;
+    return false;
+  }
+  return true;
+}
+
+function recordCircuitSuccess(): void {
+  circuitFailures = 0;
+}
+
+function recordCircuitFailure(): void {
+  circuitFailures++;
+  if (circuitFailures >= CIRCUIT_THRESHOLD) circuitOpenedAt = Date.now();
+}
+
+export function getCircuitState() {
+  return {
+    failures: circuitFailures,
+    open: isCircuitOpen(),
+    threshold: CIRCUIT_THRESHOLD,
+  };
+}
+
 // ── API Request ──
 
 export class ApiClient {
@@ -131,6 +166,20 @@ export class ApiClient {
     const url = `${this.config.apiBase}${path}`;
     const start = Date.now();
     let lastError: Error | null = null;
+
+    // Circuit breaker check
+    if (isCircuitOpen()) {
+      // Try cache first when circuit is open
+      if (cacheable) {
+        const staleEntry = cache.get(cacheKey);
+        if (staleEntry) {
+          fallbackCount++;
+          recordTiming(path, 0, true);
+          return staleEntry.data as T;
+        }
+      }
+      throw new Error('Circuit breaker open — backend unreachable');
+    }
 
     // Retry with exponential backoff (max 3 attempts)
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -174,6 +223,7 @@ export class ApiClient {
         // Cache successful reads
         if (cacheable) setCache(cacheKey, data);
 
+        recordCircuitSuccess();
         return data;
       } catch (e) {
         const err = e as Error;
@@ -189,7 +239,10 @@ export class ApiClient {
       }
     }
 
-    // All retries exhausted — try cache fallback
+    // All retries exhausted — record circuit failure
+    recordCircuitFailure();
+
+    // Try cache fallback
     if (cacheable) {
       // Check even expired cache entries
       const staleEntry = cache.get(cacheKey);
