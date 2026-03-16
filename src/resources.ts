@@ -78,7 +78,13 @@ Prefer the smallest tool that answers the current cognitive question.
 ## Workspace Isolation
 - All operations are workspace-scoped
 - Never generalize workspace-local identity to global without explicit policy
-- Workspace bleed is a critical defect`;
+- Workspace bleed is a critical defect
+
+## Episodic Memory Aging
+- Episodic memories are eligible for archival after semantic extraction (via velixar_distill or velixar_consolidate)
+- Semantic memories persist indefinitely — updated, never archived
+- Archived episodic memories remain accessible via velixar_timeline and velixar_inspect but are excluded from active context (velixar_context, velixar_search)
+- When consolidating, always preserve original episodic IDs as provenance`;
 
 // ── Fetch ──
 

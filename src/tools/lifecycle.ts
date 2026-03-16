@@ -76,6 +76,80 @@ export const lifecycleTools: Tool[] = [
       },
     },
   },
+  {
+    name: 'velixar_batch_store',
+    description:
+      'Store multiple memories in one call. Returns per-item status. ' +
+      'Use for bulk imports or multi-fact storage. Max 20 items per call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              content: { type: 'string' },
+              tags: { type: 'array', items: { type: 'string' } },
+              tier: { type: 'number' },
+            },
+            required: ['content'],
+          },
+          description: 'Array of memories to store (max 20)',
+        },
+      },
+      required: ['items'],
+    },
+  },
+  {
+    name: 'velixar_batch_search',
+    description:
+      'Run multiple search queries in one call. Returns results per query. ' +
+      'Use when you need to gather context from several angles simultaneously.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        queries: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of search queries (max 10)',
+        },
+        limit_per_query: { type: 'number', description: 'Max results per query (default 3)' },
+      },
+      required: ['queries'],
+    },
+  },
+  {
+    name: 'velixar_consolidate',
+    description:
+      'Merge related episodic memories into a single semantic memory. ' +
+      'Preserves originals as provenance. Use when multiple episodic memories cover the same topic and should be unified. ' +
+      'Provide memory IDs to consolidate, or a topic to auto-find candidates.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        memory_ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs to consolidate' },
+        topic: { type: 'string', description: 'Topic to auto-find consolidation candidates' },
+        summary: { type: 'string', description: 'Optional: provide the consolidated summary (otherwise auto-generated)' },
+      },
+    },
+  },
+  {
+    name: 'velixar_retag',
+    description:
+      'Update tags on one or more memories. Use for organizing, correcting, or enriching memory metadata. ' +
+      'Supports add, remove, or replace operations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        memory_ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs to retag' },
+        add_tags: { type: 'array', items: { type: 'string' }, description: 'Tags to add' },
+        remove_tags: { type: 'array', items: { type: 'string' }, description: 'Tags to remove' },
+        replace_tags: { type: 'array', items: { type: 'string' }, description: 'Replace all tags with these' },
+      },
+      required: ['memory_ids'],
+    },
+  },
 ];
 
 export async function handleLifecycleTool(
@@ -213,6 +287,157 @@ export async function handleLifecycleTool(
         memories: result.memories || [],
         count: (result.memories || []).length,
       }, config, { data_absent: !(result.memories?.length) })),
+    };
+  }
+
+  if (name === 'velixar_batch_store') {
+    const items = (args.items as Array<{ content: string; tags?: string[]; tier?: number }>).slice(0, 20);
+    const results = await Promise.allSettled(
+      items.map(item =>
+        api.post<{ id?: string; error?: string }>('/memory', {
+          content: item.content,
+          user_id: config.userId,
+          tier: item.tier ?? 2,
+          tags: item.tags || autoTags(item.content),
+          author: { type: 'user' },
+        }),
+      ),
+    );
+
+    const statuses = results.map((r, i) => ({
+      index: i,
+      status: r.status === 'fulfilled' && !r.value.error ? 'ok' : 'error',
+      id: r.status === 'fulfilled' ? r.value.id : undefined,
+      error: r.status === 'rejected' ? String(r.reason) : r.status === 'fulfilled' ? r.value.error : undefined,
+    }));
+
+    return {
+      text: JSON.stringify(wrapResponse({
+        items: statuses,
+        stored_count: statuses.filter(s => s.status === 'ok').length,
+        error_count: statuses.filter(s => s.status === 'error').length,
+      }, config)),
+    };
+  }
+
+  if (name === 'velixar_batch_search') {
+    const queries = (args.queries as string[]).slice(0, 10);
+    const limit = Math.min((args.limit_per_query as number) || 3, 10);
+
+    const results = await Promise.allSettled(
+      queries.map(q => {
+        const params = new URLSearchParams({ q, user_id: config.userId, limit: String(limit) });
+        return api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
+      }),
+    );
+
+    const queryResults = results.map((r, i) => ({
+      query: queries[i],
+      memories: r.status === 'fulfilled' ? (r.value.memories || []) : [],
+      count: r.status === 'fulfilled' ? (r.value.memories || []).length : 0,
+      error: r.status === 'rejected' ? String(r.reason) : undefined,
+    }));
+
+    return {
+      text: JSON.stringify(wrapResponse({ results: queryResults, total_queries: queries.length }, config)),
+    };
+  }
+
+  if (name === 'velixar_consolidate') {
+    const memoryIds = args.memory_ids as string[] | undefined;
+    const topic = args.topic as string | undefined;
+    let providedSummary = args.summary as string | undefined;
+
+    // Find candidates: either by IDs or by topic search
+    let candidates: Array<{ id: string; content: string; tags: string[] }> = [];
+
+    if (memoryIds?.length) {
+      const fetches = await Promise.allSettled(
+        memoryIds.slice(0, 10).map(id =>
+          api.get<{ memory?: Record<string, unknown> }>(`/memory/${id}`, true),
+        ),
+      );
+      for (const f of fetches) {
+        if (f.status === 'fulfilled' && f.value.memory) {
+          const m = f.value.memory as any;
+          candidates.push({ id: m.id, content: m.content || '', tags: m.tags || [] });
+        }
+      }
+    } else if (topic) {
+      const params = new URLSearchParams({ q: topic, user_id: config.userId, limit: '10' });
+      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
+      candidates = (result.memories || []).map((m: any) => ({
+        id: m.id, content: m.content || '', tags: m.tags || [],
+      }));
+    } else {
+      throw new Error('Either memory_ids or topic required');
+    }
+
+    if (candidates.length < 2) {
+      return { text: JSON.stringify(wrapResponse({ message: 'Need at least 2 memories to consolidate', candidates: candidates.length }, config)) };
+    }
+
+    // Build consolidated summary
+    const summary = providedSummary || candidates.map(c => c.content).join(' | ');
+    const allTags = [...new Set(candidates.flatMap(c => c.tags).concat(['consolidated']))];
+
+    // Store consolidated semantic memory
+    const stored = await api.post<{ id?: string; error?: string }>('/memory', {
+      content: summary.slice(0, 4000),
+      user_id: config.userId,
+      tier: 2,
+      tags: allTags,
+      author: { type: 'pipeline' },
+    });
+
+    if (stored.error) throw new Error(stored.error);
+
+    return {
+      text: JSON.stringify(wrapResponse({
+        consolidated_id: stored.id,
+        source_count: candidates.length,
+        source_ids: candidates.map(c => c.id),
+        tags: allTags,
+        before: candidates.map(c => ({ id: c.id, preview: c.content.slice(0, 80) })),
+        after: { id: stored.id, preview: summary.slice(0, 200) },
+      }, config)),
+    };
+  }
+
+  if (name === 'velixar_retag') {
+    const memoryIds = (args.memory_ids as string[]).slice(0, 20);
+    const addTags = args.add_tags as string[] | undefined;
+    const removeTags = args.remove_tags as string[] | undefined;
+    const replaceTags = args.replace_tags as string[] | undefined;
+
+    const results = await Promise.allSettled(
+      memoryIds.map(async id => {
+        let newTags: string[];
+        if (replaceTags) {
+          newTags = replaceTags;
+        } else {
+          // Fetch current tags
+          const mem = await api.get<{ memory?: Record<string, unknown> }>(`/memory/${id}`, true);
+          const current = ((mem.memory as any)?.tags as string[]) || [];
+          newTags = [...current];
+          if (addTags) newTags.push(...addTags.filter(t => !newTags.includes(t)));
+          if (removeTags) newTags = newTags.filter(t => !removeTags.includes(t));
+        }
+        return api.patch<{ error?: string }>(`/memory/${id}`, { tags: newTags });
+      }),
+    );
+
+    const statuses = results.map((r, i) => ({
+      id: memoryIds[i],
+      status: r.status === 'fulfilled' ? 'ok' : 'error',
+      error: r.status === 'rejected' ? String(r.reason) : undefined,
+    }));
+
+    return {
+      text: JSON.stringify(wrapResponse({
+        items: statuses,
+        updated_count: statuses.filter(s => s.status === 'ok').length,
+      }, config)),
     };
   }
 
