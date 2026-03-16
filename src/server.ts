@@ -10,6 +10,8 @@ import {
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { loadConfig, ApiClient } from './api.js';
@@ -20,6 +22,7 @@ import { graphTools, handleGraphTool } from './tools/graph.js';
 import { cognitiveTools, handleCognitiveTool } from './tools/cognitive.js';
 import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
 import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity, refreshRelevantMemories, markToolCall, isRelevantStale } from './resources.js';
+import { getPromptList, getPrompt } from './prompts.js';
 
 // ── Init ──
 
@@ -42,7 +45,7 @@ const systemToolNames = new Set(systemTools.map(t => t.name));
 
 const server = new Server(
   { name: 'velixar-mcp-server', version: '0.5.0' },
-  { capabilities: { tools: {}, resources: {} } },
+  { capabilities: { tools: {}, resources: {}, prompts: {} } },
 );
 
 // ── Resources ──
@@ -51,6 +54,11 @@ fetchRecall(api, config); // non-blocking startup
 
 server.setRequestHandler(ListResourcesRequestSchema, async () => getResourceList());
 server.setRequestHandler(ReadResourceRequestSchema, async (req) => readResource(req.params.uri));
+
+// ── Prompts ──
+
+server.setRequestHandler(ListPromptsRequestSchema, async () => getPromptList());
+server.setRequestHandler(GetPromptRequestSchema, async (req) => getPrompt(req.params.name, (req.params.arguments || {}) as Record<string, string>));
 
 // ── Tools ──
 
