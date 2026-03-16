@@ -57,12 +57,35 @@ export async function handleGraphTool(
       }));
       const root = nodes[0] || { id: args.entity, entity_type: 'unknown', label: args.entity as string };
 
+      // H12: Cross-memory relationship inference — find memories mentioning connected entities
+      // that might reveal implicit relationships not captured by per-memory extraction
+      let implicitConnections: Array<{ entity: string; memory_count: number }> = [];
+      if (nodes.length > 1) {
+        const entityLabels = nodes.slice(1, 4).map(n => n.label); // check top 3 connected
+        try {
+          const crossSearch = await Promise.allSettled(
+            entityLabels.map(label => {
+              const p = new URLSearchParams({ q: `${args.entity} ${label}`, limit: '3' });
+              return api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${p}`, true);
+            }),
+          );
+          implicitConnections = crossSearch
+            .map((r, i) => ({
+              entity: entityLabels[i],
+              memory_count: r.status === 'fulfilled' ? (r.value.memories || []).length : 0,
+            }))
+            .filter(c => c.memory_count > 0);
+        } catch { /* non-blocking */ }
+      }
+
       return {
         text: JSON.stringify(wrapResponse({
           root,
           relations,
           connected_entities: nodes.slice(1),
           depth_reached: result.hops ?? 0,
+          // H12: Implicit connections found via cross-memory search
+          ...(implicitConnections.length ? { implicit_connections: implicitConnections } : {}),
         }, config, {
           data_absent: nodes.length === 0,
         })),

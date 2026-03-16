@@ -21,8 +21,14 @@ export const systemTools: Tool[] = [
     name: 'velixar_debug',
     description:
       'Get debug information about the current Velixar MCP server state. Returns workspace config, ' +
-      'cache state, recent API timings, retry/fallback counts, circuit breaker state. Use to diagnose unexpected behavior.',
-    inputSchema: { type: 'object', properties: {}, required: [] },
+      'cache state, recent API timings, retry/fallback counts, circuit breaker state. ' +
+      'Can toggle verbose logging at runtime without restart.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        verbose: { type: 'boolean', description: 'Set verbose logging on/off (omit to just get debug info)' },
+      },
+    },
   },
   {
     name: 'velixar_capabilities',
@@ -90,6 +96,10 @@ export async function handleSystemTool(
   }
 
   if (name === 'velixar_debug') {
+    // H31: Runtime debug toggle
+    if (typeof args.verbose === 'boolean') {
+      config.debug = args.verbose;
+    }
     const timings = getTimings();
     const stats = getRetryStats();
     const circuit = getCircuitState();

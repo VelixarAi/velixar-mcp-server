@@ -8,6 +8,13 @@ import type { ApiConfig, MemoryItem } from '../types.js';
 import { justify } from '../justify.js';
 import { validateIdentityResponse, validateSearchResponse } from '../validate.js';
 
+// H10/H11: Track identity freshness
+let _lastIdentityUpdate = 0;
+let _toolCallsSinceIdentityUpdate = 0;
+const IDENTITY_STALE_CALLS = 20; // suggest refresh after this many tool calls
+
+export function trackToolCallForIdentity(): void { _toolCallsSinceIdentityUpdate++; }
+
 export const cognitiveTools: Tool[] = [
   {
     name: 'velixar_identity',
@@ -99,6 +106,10 @@ export async function handleCognitiveTool(
         author: { type: 'user' },
       });
 
+      // H10: Track identity update
+      _lastIdentityUpdate = Date.now();
+      _toolCallsSinceIdentityUpdate = 0;
+
       return {
         text: JSON.stringify(wrapResponse(
           { action, field, value, message: `Identity field "${field}" ${action}d` },
@@ -130,6 +141,12 @@ export async function handleCognitiveTool(
       })),
       snapshot_count: result.snapshot_count || 0,
       workspace_scope: 'workspace_local',
+      // H10: Identity staleness detection
+      stale_identity: _lastIdentityUpdate > 0 && _toolCallsSinceIdentityUpdate > IDENTITY_STALE_CALLS,
+      // H11: Refresh hint
+      ...(_toolCallsSinceIdentityUpdate > IDENTITY_STALE_CALLS
+        ? { refresh_hint: 'Identity has not been updated recently. Consider storing new preferences or expertise if they have changed.' }
+        : {}),
       justification: justify(
         'User identity profile synthesized from stored preferences and behavioral patterns',
         Object.keys(identity).length > 0 ? 'synthesized_summary' : 'hypothesis',
@@ -226,8 +243,33 @@ export async function handleCognitiveTool(
 
     // Use search to find temporally-related memories, sorted by time
     if (topic) {
-      const params = new URLSearchParams({ q: topic, user_id: config.userId, limit: String(limit) });
+      // H14: Synonym expansion — query graph for entity aliases to broaden search
+      let expandedTerms: string[] = [topic];
+      try {
+        const graphResult = await api.post<{ nodes?: Array<Record<string, unknown>> }>('/graph/traverse', { entity: topic, max_hops: 1 });
+        if (graphResult.nodes?.length) {
+          const aliases = graphResult.nodes
+            .filter(n => String(n.relationship || '').match(/alias|also_known_as|synonym/i))
+            .map(n => String(n.label || ''))
+            .filter(Boolean);
+          if (aliases.length) expandedTerms.push(...aliases.slice(0, 3));
+        }
+      } catch { /* graph unavailable — proceed with original term */ }
+
+      // H13: Search with expanded terms for better recall
+      const searchQuery = expandedTerms.join(' OR ');
+      const params = new URLSearchParams({ q: searchQuery, user_id: config.userId, limit: String(limit) });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+
+      // H13: Also fetch graph relationships for the entity
+      let relatedEntities: Array<{ label: string; relationship: string }> = [];
+      try {
+        const graphResult = await api.post<{ nodes?: Array<Record<string, unknown>>; edges?: Array<Record<string, unknown>> }>('/graph/traverse', { entity: topic, max_hops: 1 });
+        relatedEntities = (graphResult.edges || []).map(e => ({
+          label: String((e as Record<string, unknown>).target || ''),
+          relationship: String((e as Record<string, unknown>).relationship || 'related'),
+        })).slice(0, 10);
+      } catch { /* graph unavailable */ }
       const result = validateSearchResponse(raw, '/memory/search');
 
       const entries = result.memories
@@ -265,6 +307,10 @@ export async function handleCognitiveTool(
             current_state: entries.length > 0 ? entries[entries.length - 1].summary : null,
             uncertainty: entries.length < 3 ? 'Limited data — timeline may be incomplete' : null,
             count: entries.length,
+            // H13: Related entities from knowledge graph
+            ...(relatedEntities.length ? { related_entities: relatedEntities } : {}),
+            // H14: Search terms used (including synonyms)
+            ...(expandedTerms.length > 1 ? { search_expanded: expandedTerms } : {}),
           },
           config,
           { data_absent: entries.length === 0 },

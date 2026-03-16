@@ -379,7 +379,7 @@ export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem
 }
 
 export function makeMeta(config: ApiConfig, overrides: Partial<ResponseMeta> = {}): ResponseMeta {
-  return {
+  const meta: ResponseMeta = {
     workspace_id: config.workspaceId,
     confidence: 1,
     staleness: 'fresh',
@@ -391,6 +391,11 @@ export function makeMeta(config: ApiConfig, overrides: Partial<ResponseMeta> = {
     // H8: If data_absent, require absence_reason
     ...(overrides.data_absent && !overrides.absence_reason ? { absence_reason: 'no_data' as const } : {}),
   };
+  // H30: Early-exit signal — sufficient when data present, confident, no contradictions
+  if (meta.sufficient_answer === undefined) {
+    meta.sufficient_answer = !meta.data_absent && !meta.partial_context && !meta.contradictions_present && meta.confidence >= 0.7;
+  }
+  return meta;
 }
 
 export function wrapResponse<T>(data: T, config: ApiConfig, overrides: Partial<ResponseMeta> = {}): VelixarResponse<T> {

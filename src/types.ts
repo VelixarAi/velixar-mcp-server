@@ -16,6 +16,8 @@ export interface ResponseMeta {
   partial_context: boolean;
   request_ms: number;
   cached?: boolean;
+  // H30: Early-exit signal for workflow prompts — LLM can stop if true
+  sufficient_answer?: boolean;
 }
 
 export interface VelixarResponse<T> {
