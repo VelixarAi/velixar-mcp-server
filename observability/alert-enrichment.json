@@ -1,0 +1,40 @@
+{
+  "description": "M25: Alert enrichment spec — auto-attach context when alerts fire",
+  "enrichment_rules": [
+    {
+      "alert_pattern": "velixar.api.latency_ms.p99 > *",
+      "attach": [
+        { "source": "cloudwatch_logs", "query": "fields @timestamp, @message | filter @message like /api_timing/ | sort @timestamp desc | limit 20", "window_minutes": 5 },
+        { "source": "mcp_client", "data": "circuit_breaker_state" },
+        { "source": "mcp_client", "data": "rate_limit_info" }
+      ]
+    },
+    {
+      "alert_pattern": "velixar.schema_error.count > 0",
+      "attach": [
+        { "source": "cloudwatch_logs", "query": "fields @timestamp, @message | filter @message like /SchemaError/ | sort @timestamp desc | limit 10", "window_minutes": 5 },
+        { "source": "lambda", "data": "recent_deploy_info" }
+      ]
+    },
+    {
+      "alert_pattern": "velixar.circuit_breaker.state == 'open'",
+      "attach": [
+        { "source": "cloudwatch_logs", "query": "fields @timestamp, @message | filter @message like /circuit_breaker|5xx|timeout/ | sort @timestamp desc | limit 30", "window_minutes": 10 },
+        { "source": "lambda", "data": "error_rate_last_10m" },
+        { "source": "mcp_client", "data": "consecutive_circuit_opens" }
+      ]
+    },
+    {
+      "alert_pattern": "velixar.rate_limit.remaining_pct < 20%",
+      "attach": [
+        { "source": "mcp_client", "data": "rate_limit_info" },
+        { "source": "cloudwatch_logs", "query": "fields @timestamp, @message | filter @message like /X-RateLimit/ | sort @timestamp desc | limit 10", "window_minutes": 5 }
+      ]
+    }
+  ],
+  "delivery": {
+    "channels": ["slack", "pagerduty"],
+    "format": "structured_json",
+    "max_attachment_size_kb": 50
+  }
+}

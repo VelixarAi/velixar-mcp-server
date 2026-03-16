@@ -1,0 +1,51 @@
+name: Memory Summarization
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  summarize:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect PR context
+        id: context
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_BODY="${{ github.event.pull_request.body }}"
+          COMMITS=$(git log --oneline ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} | head -20)
+          FILES_CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} | head -30)
+          
+          # Build a single summarized memory instead of per-commit noise
+          SUMMARY="PR #${{ github.event.pull_request.number }}: ${PR_TITLE}"
+          if [ -n "$PR_BODY" ]; then
+            # Take first 500 chars of PR body
+            SUMMARY="${SUMMARY}\n\n$(echo "$PR_BODY" | head -c 500)"
+          fi
+          SUMMARY="${SUMMARY}\n\nFiles: $(echo "$FILES_CHANGED" | wc -l | tr -d ' ') changed"
+          
+          echo "summary<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$SUMMARY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Store summarized memory
+        if: env.VELIXAR_API_KEY != ''
+        env:
+          VELIXAR_API_KEY: ${{ secrets.VELIXAR_API_KEY }}
+          VELIXAR_API_URL: ${{ secrets.VELIXAR_API_URL }}
+          VELIXAR_WORKSPACE_ID: ${{ secrets.VELIXAR_WORKSPACE_ID }}
+        run: |
+          curl -s -X POST "${VELIXAR_API_URL}/memory" \
+            -H "Authorization: Bearer ${VELIXAR_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg content "${{ steps.context.outputs.summary }}" \
+              --arg workspace "$VELIXAR_WORKSPACE_ID" \
+              '{content: $content, tier: 2, tags: ["ci", "pr-merge", "automated"], workspace_id: $workspace}')" \
+            | jq '.id // "stored"'

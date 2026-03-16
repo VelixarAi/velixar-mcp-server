@@ -1,0 +1,106 @@
+{
+  "description": "M1: Messy data fixture — duplicates, contradictions, poor tags, ambiguous scope. Simulates real-world degraded data.",
+  "workspace_id": "bench-messy",
+  "memory_count": 1200,
+  "generators": {
+    "duplicates": {
+      "count": 80,
+      "strategy": "exact_and_near",
+      "examples": [
+        { "original": "Use PostgreSQL for the main database", "duplicate": "Use PostgreSQL for the main database", "type": "exact" },
+        { "original": "Deploy to us-east-1 for lowest latency", "duplicate": "We deploy to us-east-1 because latency is lowest there", "type": "near" },
+        { "original": "The API timeout is 30 seconds", "duplicate": "API timeout: 30s", "type": "abbreviation" },
+        { "original": "We chose React for the frontend framework", "duplicate": "React was selected as our frontend framework", "type": "passive_rewrite" }
+      ]
+    },
+    "contradictions": {
+      "count": 25,
+      "examples": [
+        { "a": "Always use snake_case for API fields", "b": "Our API uses camelCase consistently", "age_gap_days": 45 },
+        { "a": "Redis is our caching layer", "b": "We migrated caching to Memcached last sprint", "age_gap_days": 30 },
+        { "a": "The team prefers monorepo structure", "b": "Each service has its own repository", "age_gap_days": 60 },
+        { "a": "We use Jest for all testing", "b": "Vitest replaced Jest in Q4", "age_gap_days": 90 },
+        { "a": "Docker Compose for local dev", "b": "We switched to Tilt for local development", "age_gap_days": 20 },
+        { "a": "Feature flags managed in LaunchDarkly", "b": "We built an internal feature flag service", "age_gap_days": 75 },
+        { "a": "GraphQL for all new endpoints", "b": "REST is simpler — new endpoints should be REST", "age_gap_days": 15 }
+      ]
+    },
+    "poor_tags": {
+      "count": 150,
+      "examples": [
+        { "content": "Important meeting notes about the architecture decision", "tags": ["misc"] },
+        { "content": "The database migration script needs to handle NULL values in the email column", "tags": ["stuff", "todo"] },
+        { "content": "Performance optimization: add index on users.created_at", "tags": [] },
+        { "content": "Security review findings for auth service", "tags": ["note"] },
+        { "content": "CI pipeline takes 12 minutes — need to parallelize test suites", "tags": ["thing", "work"] }
+      ]
+    },
+    "ambiguous_scope": {
+      "count": 100,
+      "examples": [
+        { "content": "Use TypeScript strict mode", "ambiguity": "which project? all? one?" },
+        { "content": "The deadline is next Friday", "ambiguity": "which Friday? no absolute date" },
+        { "content": "Fix the bug in the login flow", "ambiguity": "which bug? which login flow?" },
+        { "content": "We agreed to refactor this", "ambiguity": "refactor what? who agreed?" },
+        { "content": "The config needs updating", "ambiguity": "which config? what update?" }
+      ]
+    },
+    "low_signal": {
+      "count": 200,
+      "examples": [
+        { "content": "ok", "signal": "zero" },
+        { "content": "fixed", "signal": "zero" },
+        { "content": "done", "signal": "zero" },
+        { "content": "looks good", "signal": "zero" },
+        { "content": "wip", "signal": "zero" },
+        { "content": "test", "signal": "zero" },
+        { "content": "updated the thing", "signal": "low" },
+        { "content": "changed it", "signal": "low" }
+      ]
+    },
+    "stale": {
+      "count": 100,
+      "age_range_days": [180, 730],
+      "examples": [
+        { "content": "Using Node 14 for all services", "actual_current": "Node 20" },
+        { "content": "Webpack 4 build configuration", "actual_current": "Vite" },
+        { "content": "Deploy via Heroku", "actual_current": "AWS ECS" }
+      ]
+    },
+    "valid_high_signal": {
+      "count": 545,
+      "description": "Clean, well-tagged, high-signal memories to mix with noise"
+    }
+  },
+  "expected_outcomes": {
+    "duplicate_detection_rate": { "baseline": 0.7, "excellence": 0.9 },
+    "contradiction_detection_rate": { "baseline": 0.5, "excellence": 0.8 },
+    "low_signal_rejection_rate": { "baseline": 0.8, "excellence": 0.95 },
+    "stale_flagging_rate": { "baseline": 0.3, "excellence": 0.6 },
+    "context_precision_despite_noise": { "baseline": 0.5, "excellence": 0.75 }
+  },
+  "gold_tasks": [
+    {
+      "name": "search_through_noise",
+      "query": "database configuration",
+      "expected": "Returns PostgreSQL preference, NOT Memcached/Redis confusion",
+      "noise_ratio": 0.6
+    },
+    {
+      "name": "distill_with_duplicates",
+      "query": "deployment strategy",
+      "expected": "Deduplicates and returns single coherent summary",
+      "duplicate_count_in_results": 0
+    },
+    {
+      "name": "resolve_contradiction",
+      "query": "testing framework",
+      "expected": "Identifies Jest→Vitest transition, marks Jest as superseded"
+    },
+    {
+      "name": "ignore_low_signal",
+      "query": "recent changes",
+      "expected": "Excludes 'ok', 'done', 'wip' from results"
+    }
+  ]
+}

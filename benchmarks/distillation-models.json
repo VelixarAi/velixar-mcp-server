@@ -1,0 +1,57 @@
+{
+  "description": "H16: Model-aware distillation benchmarks — track extraction quality per backend model",
+  "models": [
+    { "id": "claude-sonnet-4-20250514", "family": "anthropic", "context_window": 200000 },
+    { "id": "gpt-4o", "family": "openai", "context_window": 128000 },
+    { "id": "gpt-4o-mini", "family": "openai", "context_window": 128000 },
+    { "id": "claude-3-5-haiku-20241022", "family": "anthropic", "context_window": 200000 }
+  ],
+  "distillation_prompts": [
+    {
+      "name": "entity_extraction",
+      "input": "We decided to use PostgreSQL 16 with pgvector for our RAG pipeline. The team lead Sarah approved this after benchmarking against Pinecone.",
+      "expected_entities": ["PostgreSQL 16", "pgvector", "RAG pipeline", "Sarah", "Pinecone"],
+      "min_entities": 4
+    },
+    {
+      "name": "temporal_ordering",
+      "input": "In January we used Redis. By March we switched to Memcached. In June we went back to Redis with cluster mode.",
+      "expected_timeline_points": 3,
+      "expected_final_state": "Redis with cluster mode"
+    },
+    {
+      "name": "contradiction_detection",
+      "input": "Memory A (Jan 5): Use tabs for indentation. Memory B (Mar 12): Always use 2-space indentation.",
+      "expected_contradiction": true,
+      "expected_superseded": "Memory A"
+    },
+    {
+      "name": "low_signal_filtering",
+      "input": "ok\nfixed\nWe migrated the auth service to use JWT with RS256 signing\ndone\nlgtm",
+      "expected_kept": "We migrated the auth service to use JWT with RS256 signing",
+      "expected_filtered": 4
+    },
+    {
+      "name": "relationship_inference",
+      "input": "The payment service calls the user service for auth validation. The user service depends on the PostgreSQL database. The notification service subscribes to payment events.",
+      "expected_relationships": [
+        ["payment service", "user service", "calls"],
+        ["user service", "PostgreSQL", "depends_on"],
+        ["notification service", "payment service", "subscribes_to"]
+      ],
+      "min_relationships": 2
+    }
+  ],
+  "thresholds": {
+    "entity_extraction_recall": { "baseline": 0.7, "excellence": 0.9 },
+    "temporal_ordering_accuracy": { "baseline": 0.8, "excellence": 1.0 },
+    "contradiction_detection_rate": { "baseline": 0.6, "excellence": 0.9 },
+    "low_signal_filter_precision": { "baseline": 0.75, "excellence": 0.95 },
+    "relationship_inference_recall": { "baseline": 0.5, "excellence": 0.8 }
+  },
+  "regression_policy": {
+    "description": "If any model drops >10% on any metric vs previous run, flag as regression",
+    "max_allowed_drop_pct": 10,
+    "action_on_regression": "block_deploy"
+  }
+}

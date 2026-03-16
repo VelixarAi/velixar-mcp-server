@@ -9,17 +9,31 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = JSON.parse(readFileSync(join(__dirname, 'fixtures.json'), 'utf-8'));
 const prompts = JSON.parse(readFileSync(join(__dirname, 'tool-selection-prompts.json'), 'utf-8'));
+const messyFixture = JSON.parse(readFileSync(join(__dirname, 'messy-fixture.json'), 'utf-8'));
+
+// M2: Confidence interval helper — Wilson score interval for proportions
+function wilsonCI(successes, total, z = 1.96) {
+  if (total === 0) return { lower: 0, upper: 0, margin: 0 };
+  const p = successes / total;
+  const denom = 1 + z * z / total;
+  const center = (p + z * z / (2 * total)) / denom;
+  const spread = z * Math.sqrt((p * (1 - p) + z * z / (4 * total)) / total) / denom;
+  return { lower: Math.max(0, center - spread), upper: Math.min(1, center + spread), margin: spread };
+}
 
 const results = [];
 
 // Tool Selection Coverage
 const tools = new Set(prompts.map(p => p.expected));
+const coverageRatio = tools.size / 23;
+const coverageCI = coverageRatio <= 1.0 ? wilsonCI(tools.size, 23) : null; // CI only meaningful for proportions ≤1
 results.push({
   suite: 'tool_selection_coverage',
-  score: tools.size / 23,
+  score: coverageRatio,
+  ci: coverageCI,
   baseline: 0.8, excellence: 0.95,
-  pass: tools.size / 23 >= 0.8,
-  details: `${tools.size}/23 tools covered, ${prompts.length} prompts`,
+  pass: coverageRatio >= 0.8,
+  details: `${tools.size}/23 tools covered, ${prompts.length} prompts${coverageCI ? ` (±${(coverageCI.margin * 100).toFixed(1)}%)` : ''}`,
 });
 
 // Fixture Completeness
@@ -62,11 +76,26 @@ if (graphPrompts.length < 5) {
   console.log(`⚠ M15: Only ${graphPrompts.length} graph-related prompts — consider adding more for gap detection`);
 }
 
+// M1: Messy Data Fixture Completeness
+const messyGenerators = Object.keys(messyFixture.generators);
+const messyGold = messyFixture.gold_tasks.length;
+const messyOutcomes = Object.keys(messyFixture.expected_outcomes);
+const messyCI = wilsonCI(messyGenerators.length, 7); // 7 noise categories expected
+results.push({
+  suite: 'messy_fixture_completeness',
+  score: messyGenerators.length >= 6 && messyGold >= 4 ? 1.0 : messyGenerators.length / 6,
+  ci: messyCI,
+  baseline: 1.0, excellence: 1.0,
+  pass: messyGenerators.length >= 6 && messyGold >= 4 && messyOutcomes.length >= 4,
+  details: `${messyGenerators.length} noise generators, ${messyGold} gold tasks, ${messyOutcomes.length} outcome thresholds (±${(messyCI.margin * 100).toFixed(1)}%)`,
+});
+
 // Print
 console.log('\n═══ Velixar Benchmark Results ═══\n');
 for (const r of results) {
   const s = r.pass ? '✅' : '❌';
-  console.log(`${s} ${r.suite}: ${(r.score * 100).toFixed(1)}% (baseline: ${(r.baseline * 100).toFixed(0)}%, excellence: ${(r.excellence * 100).toFixed(0)}%)`);
+  const ciStr = r.ci ? ` [${(r.ci.lower * 100).toFixed(1)}%-${(r.ci.upper * 100).toFixed(1)}%]` : '';
+  console.log(`${s} ${r.suite}: ${(r.score * 100).toFixed(1)}%${ciStr} (baseline: ${(r.baseline * 100).toFixed(0)}%, excellence: ${(r.excellence * 100).toFixed(0)}%)`);
   if (r.details) console.log(`   ${r.details}`);
 }
 const allPass = results.every(r => r.pass);

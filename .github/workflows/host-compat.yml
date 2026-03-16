@@ -1,0 +1,25 @@
+name: Host Compatibility
+
+on:
+  push:
+    branches: [main]
+    paths: ['src/**']
+  schedule:
+    - cron: '0 6 * * 1' # Weekly Monday 6am UTC
+
+jobs:
+  host-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        host: [cursor, continue, vscode-copilot, windsurf, kiro]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run build
+
+      - name: Simulate ${{ matrix.host }} MCP client
+        run: node scripts/host-compat-test.js ${{ matrix.host }}

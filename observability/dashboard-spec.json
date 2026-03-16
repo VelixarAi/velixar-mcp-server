@@ -1,0 +1,100 @@
+{
+  "description": "M24: Unified observability dashboard spec — correlates MCP client metrics with Lambda server metrics",
+  "dashboard_name": "Velixar MCP Observability",
+  "refresh_interval_seconds": 60,
+  "panels": [
+    {
+      "title": "MCP Tool Call Volume",
+      "type": "timeseries",
+      "metrics": [
+        { "source": "lambda", "metric": "velixar.tool_calls.count", "group_by": "tool_name" }
+      ],
+      "alert": { "condition": "rate_drop > 50% over 5m", "severity": "warning" }
+    },
+    {
+      "title": "API Latency (p50/p95/p99)",
+      "type": "timeseries",
+      "metrics": [
+        { "source": "lambda", "metric": "velixar.api.latency_ms", "percentiles": [50, 95, 99] }
+      ],
+      "alert": { "condition": "p99 > 5000ms for 3m", "severity": "critical" }
+    },
+    {
+      "title": "Circuit Breaker State",
+      "type": "stat",
+      "metrics": [
+        { "source": "mcp_client", "metric": "velixar.circuit_breaker.state", "values": ["closed", "open", "half_open"] }
+      ],
+      "alert": { "condition": "state == 'open' for > 2m", "severity": "critical" }
+    },
+    {
+      "title": "Rate Limit Budget",
+      "type": "gauge",
+      "metrics": [
+        { "source": "mcp_client", "metric": "velixar.rate_limit.remaining_pct" }
+      ],
+      "alert": { "condition": "remaining_pct < 20%", "severity": "warning" }
+    },
+    {
+      "title": "Memory Operations",
+      "type": "timeseries",
+      "metrics": [
+        { "source": "lambda", "metric": "velixar.memory.store_count" },
+        { "source": "lambda", "metric": "velixar.memory.search_count" },
+        { "source": "lambda", "metric": "velixar.memory.delete_count" }
+      ]
+    },
+    {
+      "title": "Distillation Quality",
+      "type": "timeseries",
+      "metrics": [
+        { "source": "lambda", "metric": "velixar.distill.quality_score", "percentiles": [50, 95] },
+        { "source": "lambda", "metric": "velixar.distill.duplicate_detected_count" }
+      ],
+      "alert": { "condition": "p50_quality < 0.5 for 10m", "severity": "warning" }
+    },
+    {
+      "title": "Schema Validation Errors",
+      "type": "stat",
+      "metrics": [
+        { "source": "mcp_client", "metric": "velixar.schema_error.count" }
+      ],
+      "alert": { "condition": "count > 0 in 5m", "severity": "critical" }
+    },
+    {
+      "title": "Lambda Cold Starts",
+      "type": "timeseries",
+      "metrics": [
+        { "source": "lambda", "metric": "velixar.lambda.cold_start_count" },
+        { "source": "lambda", "metric": "velixar.lambda.init_duration_ms" }
+      ]
+    },
+    {
+      "title": "Graph Traverse Telemetry",
+      "type": "stat",
+      "metrics": [
+        { "source": "mcp_client", "metric": "velixar.graph.traverse_count" },
+        { "source": "mcp_client", "metric": "velixar.graph.no_entity_pct" }
+      ]
+    },
+    {
+      "title": "Session Resume Latency",
+      "type": "timeseries",
+      "metrics": [
+        { "source": "mcp_client", "metric": "velixar.session_resume.latency_ms", "percentiles": [50, 95] }
+      ]
+    }
+  ],
+  "correlation_rules": [
+    {
+      "name": "cold_start_latency_spike",
+      "description": "Correlate Lambda cold starts with p99 latency spikes",
+      "trigger": "lambda.cold_start_count > 0 AND api.latency_ms.p99 > 3000"
+    },
+    {
+      "name": "rate_limit_circuit_break",
+      "description": "Correlate rate limit exhaustion with circuit breaker opens",
+      "trigger": "rate_limit.remaining_pct < 5% AND circuit_breaker.state == 'open'"
+    }
+  ]
+}
