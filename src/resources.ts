@@ -277,7 +277,15 @@ export async function readResource(uri: string, api?: ApiClient) {
       const result = await api.post<Record<string, unknown>>('/graph/search', { query: domain, limit: 50 });
       const r = result as Record<string, unknown>;
       const entities = Array.isArray(r.entities) ? r.entities : Array.isArray(r.results) ? r.results : [];
-      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify({ domain, entities, count: entities.length }) }] };
+      // M23: Add freshness metadata to each entity
+      const now = Date.now();
+      const enriched = entities.map((e: Record<string, unknown>) => {
+        const createdAt = String(e.created_at || e.node_created_at || '');
+        const createdMs = createdAt ? new Date(createdAt).getTime() : 0;
+        const stalenessDays = createdMs > 0 ? Math.floor((now - createdMs) / (1000 * 60 * 60 * 24)) : null;
+        return { ...e, node_created_at: createdAt || null, staleness_days: stalenessDays };
+      });
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify({ domain, entities: enriched, count: enriched.length }) }] };
     } catch {
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify({ domain, entities: [], count: 0, error: 'Graph search unavailable' }) }] };
     }

@@ -1,8 +1,11 @@
 // ── Runtime Schema Validation ──
 // Lightweight validators for backend API responses.
 // No external deps — just shape checks that return typed data or throw.
+// NOTE: Must not import from api.ts to avoid circular dependency.
 
-import { log } from './api.js';
+function warnSchema(endpoint: string, reason: string, got: string): void {
+  console.error(`[velixar] warn: schema_skip_memory ${JSON.stringify({ endpoint, reason, got })}`);
+}
 
 export class SchemaError extends Error {
   constructor(public endpoint: string, public field: string, public expected: string, public got: unknown) {
@@ -87,7 +90,7 @@ function validateRawMemory(m: unknown, endpoint: string): ValidatedRawMemory | n
   const id = str(o.id);
   const content = str(o.content);
   if (!id || !content) {
-    log('warn', 'schema_skip_memory', { endpoint, reason: 'missing id or content', got: JSON.stringify(o).slice(0, 100) });
+    warnSchema(endpoint, 'missing id or content', JSON.stringify(o).slice(0, 100));
     return null;
   }
   return {

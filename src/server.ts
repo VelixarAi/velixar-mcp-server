@@ -29,6 +29,15 @@ import { getPromptList, getPrompt, allPrompts } from './prompts.js';
 const config = loadConfig();
 const api = new ApiClient(config);
 
+// M19: MCP host detection — infer host from transport/environment signals
+const detectedHost = process.env.CURSOR_SESSION_ID ? 'cursor'
+  : process.env.CONTINUE_SESSION_ID ? 'continue'
+  : process.env.VSCODE_PID ? 'vscode'
+  : process.env.WINDSURF_SESSION ? 'windsurf'
+  : process.env.KIRO_SESSION ? 'kiro'
+  : 'unknown';
+if (detectedHost !== 'unknown') log('info', 'host_detected', { host: detectedHost });
+
 const allTools = [...memoryTools, ...recallTools, ...graphTools, ...cognitiveTools, ...lifecycleTools, ...systemTools];
 const allToolNames = allTools.map(t => t.name);
 

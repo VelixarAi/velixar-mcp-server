@@ -176,16 +176,20 @@ export function getRetryStats() {
 }
 
 // ── Circuit Breaker ──
+// M7: Adaptive — exponential backoff for recovery timeout
+// M8: Cold-start aware — single timeout followed by success doesn't open circuit
 
 const CIRCUIT_THRESHOLD = 5;    // failures before opening
-const CIRCUIT_RESET_MS = 30_000; // 30s before half-open
+const CIRCUIT_INITIAL_RESET_MS = 5_000; // M7: start at 5s, increase on repeated failures
 
 let circuitFailures = 0;
 let circuitOpenedAt = 0;
+let circuitResetMs = CIRCUIT_INITIAL_RESET_MS;
+let consecutiveOpens = 0; // M7: track repeated circuit opens
 
 function isCircuitOpen(): boolean {
   if (circuitFailures < CIRCUIT_THRESHOLD) return false;
-  if (Date.now() - circuitOpenedAt > CIRCUIT_RESET_MS) {
+  if (Date.now() - circuitOpenedAt > circuitResetMs) {
     // Half-open: allow one attempt
     circuitFailures = CIRCUIT_THRESHOLD - 1;
     return false;
@@ -194,14 +198,24 @@ function isCircuitOpen(): boolean {
 }
 
 function recordCircuitSuccess(): void {
+  // M8: If we had exactly threshold failures and now succeed, likely cold start
+  const wasColdStart = circuitFailures === CIRCUIT_THRESHOLD - 1;
   circuitFailures = 0;
+  // M7: Decrease reset timeout on success (min 5s)
+  if (consecutiveOpens > 0) {
+    consecutiveOpens = Math.max(0, consecutiveOpens - 1);
+    circuitResetMs = Math.max(CIRCUIT_INITIAL_RESET_MS, CIRCUIT_INITIAL_RESET_MS * Math.pow(2, consecutiveOpens));
+  }
 }
 
 function recordCircuitFailure(): void {
   circuitFailures++;
   if (circuitFailures >= CIRCUIT_THRESHOLD) {
     circuitOpenedAt = Date.now();
-    log('error', 'circuit_breaker_open', { failures: circuitFailures });
+    consecutiveOpens++;
+    // M7: Exponential backoff on repeated opens (max 60s)
+    circuitResetMs = Math.min(60_000, CIRCUIT_INITIAL_RESET_MS * Math.pow(2, consecutiveOpens - 1));
+    log('error', 'circuit_breaker_open', { failures: circuitFailures, reset_ms: circuitResetMs, consecutive_opens: consecutiveOpens });
   }
 }
 
@@ -210,6 +224,8 @@ export function getCircuitState() {
     failures: circuitFailures,
     open: isCircuitOpen(),
     threshold: CIRCUIT_THRESHOLD,
+    reset_ms: circuitResetMs,
+    consecutive_opens: consecutiveOpens,
   };
 }
 
@@ -298,6 +314,8 @@ export class ApiClient {
         if (this.config.debug) {
           log('debug', 'api_call', { path, duration_ms: duration });
         }
+        // M10/M29: Always log timing at info level for diagnostics
+        log('info', 'api_timing', { path, duration_ms: duration, cached: false });
 
         // Cache successful reads
         if (cacheable) setCache(cacheKey, data);

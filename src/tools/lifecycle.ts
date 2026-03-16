@@ -267,23 +267,31 @@ export async function handleLifecycleTool(
     let contradictionDetected = false;
     const contradictionsFound: string[] = [];
 
-    try {
-      const searchParams = new URLSearchParams({
-        q: content.slice(0, 200),
-        user_id: config.userId,
-        limit: '3',
-      });
-      const existing = await api.get<{ memories?: Array<Record<string, unknown>> }>(
-        `/memory/search?${searchParams}`, true,
-      );
-      const topMatch = existing.memories?.[0];
-      if (topMatch && typeof (topMatch as Record<string, unknown>).score === 'number') {
-        const score = (topMatch as Record<string, unknown>).score as number;
-        // Shorter content → higher threshold (short strings match too easily)
-        const threshold = content.length < 100 ? 0.96 : content.length < 300 ? 0.94 : 0.92;
-        if (score > threshold) duplicateDetected = true;
-      }
-    } catch { /* non-blocking */ }
+    // M28: Exact dedup fast path — check content hash before expensive cosine similarity
+    const existingExact = checkIdempotency(content);
+    if (existingExact) {
+      duplicateDetected = true;
+    }
+
+    if (!duplicateDetected) {
+      try {
+        const searchParams = new URLSearchParams({
+          q: content.slice(0, 200),
+          user_id: config.userId,
+          limit: '3',
+        });
+        const existing = await api.get<{ memories?: Array<Record<string, unknown>> }>(
+          `/memory/search?${searchParams}`, true,
+        );
+        const topMatch = existing.memories?.[0];
+        if (topMatch && typeof (topMatch as Record<string, unknown>).score === 'number') {
+          const score = (topMatch as Record<string, unknown>).score as number;
+          // Shorter content → higher threshold (short strings match too easily)
+          const threshold = content.length < 100 ? 0.96 : content.length < 300 ? 0.94 : 0.92;
+          if (score > threshold) duplicateDetected = true;
+        }
+      } catch { /* non-blocking */ }
+    }
 
     // Contradiction detection: check if content conflicts with existing beliefs
     try {
@@ -324,6 +332,9 @@ export async function handleLifecycleTool(
     });
 
     if (result.error) throw new Error(result.error);
+
+    // M28: Record hash for future exact dedup
+    if (result.id) recordIdempotency(content, result.id);
 
     // H15/H27: Distillation quality scoring
     const words = content.split(/\s+/).length;
@@ -575,7 +586,14 @@ export async function handleLifecycleTool(
     }
 
     // Step 4: Extract decisions and open threads based on intent
-    const allContent = sorted.map(m => m.content).join('\n');
+    // M26: Intent-aware extraction — different intents preserve different details
+    const codingPatterns = /\b(file|function|class|module|import|error|bug|fix|test|deploy|commit|branch|PR|TODO)\b/i;
+    const postmortemPatterns = /\b(decided|decision|failed|broke|root cause|incident|outage|rollback|lesson|mistake)\b/i;
+
+    const intentFilter = intent === 'continue_coding' ? codingPatterns
+      : intent === 'write_postmortem' ? postmortemPatterns
+      : null; // catch_up = no filter, show everything
+
     const decisions = sorted
       .filter(m => {
         const c = m.content.toLowerCase();
@@ -597,6 +615,14 @@ export async function handleLifecycleTool(
     // Focus filtering
     if (focus) {
       selectedContent = selectedContent.filter(c => c.toLowerCase().includes(focus.toLowerCase()));
+    }
+    // M26: Intent filtering — boost intent-relevant content
+    if (intentFilter && selectedContent.length > 3) {
+      selectedContent.sort((a, b) => {
+        const aMatch = intentFilter.test(a) ? 1 : 0;
+        const bMatch = intentFilter.test(b) ? 1 : 0;
+        return bMatch - aMatch;
+      });
     }
 
     const manifest = chunks.map(c => ({

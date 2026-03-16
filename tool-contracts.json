@@ -1,0 +1,76 @@
+{
+  "version": "1.0.0",
+  "description": "Tool disambiguation contracts — source of truth for descriptions and benchmarks",
+  "contracts": {
+    "velixar_context": {
+      "cognitive_mode": "orientation",
+      "use_when": "broad orientation needed, starting a task, unclear what is relevant",
+      "do_not_use_when": "you know the exact entity or have a specific search query",
+      "disambiguate_from": ["velixar_search", "velixar_identity"],
+      "signal_words": ["overview", "orient", "broad", "workspace", "starting", "resuming"]
+    },
+    "velixar_search": {
+      "cognitive_mode": "retrieval",
+      "use_when": "specific factual assertions, past decisions, known topic",
+      "do_not_use_when": "broad orientation or finding contradictions",
+      "disambiguate_from": ["velixar_context", "velixar_inspect"],
+      "signal_words": ["find", "search", "look up", "what do I know about", "notes about"]
+    },
+    "velixar_inspect": {
+      "cognitive_mode": "retrieval",
+      "use_when": "deep inspection of a specific memory by ID",
+      "do_not_use_when": "broad search without a known ID",
+      "disambiguate_from": ["velixar_search"],
+      "signal_words": ["memory ID", "inspect", "detail", "show me memory"]
+    },
+    "velixar_graph_traverse": {
+      "cognitive_mode": "structure",
+      "use_when": "relationships, dependencies, connections from a known entity",
+      "do_not_use_when": "broad topic briefing with no focal entity",
+      "disambiguate_from": ["velixar_context", "velixar_search"],
+      "signal_words": ["connects to", "related to", "dependencies", "relationships"]
+    },
+    "velixar_timeline": {
+      "cognitive_mode": "continuity",
+      "use_when": "sequence or historical change matters",
+      "do_not_use_when": "broad context with no temporal question",
+      "disambiguate_from": ["velixar_contradictions", "velixar_search"],
+      "signal_words": ["evolved", "changed", "history", "over time", "when did"]
+    },
+    "velixar_contradictions": {
+      "cognitive_mode": "conflict",
+      "use_when": "conflict suspected or surfaced by another tool",
+      "do_not_use_when": "general search or temporal questions",
+      "disambiguate_from": ["velixar_timeline", "velixar_search"],
+      "signal_words": ["contradicts", "conflicts", "inconsistent", "disagree"]
+    },
+    "velixar_identity": {
+      "cognitive_mode": "personalization",
+      "use_when": "understanding who the user is, preferences, expertise",
+      "do_not_use_when": "project facts or broad orientation",
+      "disambiguate_from": ["velixar_context", "velixar_search"],
+      "signal_words": ["preferences", "expertise", "communication style", "who am I"]
+    },
+    "velixar_patterns": {
+      "cognitive_mode": "inference",
+      "use_when": "current problem may match prior patterns",
+      "do_not_use_when": "first-pass orientation",
+      "disambiguate_from": ["velixar_context", "velixar_search"],
+      "signal_words": ["pattern", "recurring", "usually", "tends to"]
+    },
+    "velixar_distill": {
+      "cognitive_mode": "consolidation",
+      "use_when": "natural memory-worthy breakpoints",
+      "do_not_use_when": "transient chatter or single explicit facts",
+      "disambiguate_from": ["velixar_store"],
+      "signal_words": ["distill", "extract", "takeaway", "session end"]
+    },
+    "velixar_session_resume": {
+      "cognitive_mode": "continuity",
+      "use_when": "resuming work from a previous session",
+      "do_not_use_when": "first time working on something",
+      "disambiguate_from": ["velixar_session_recall", "velixar_context"],
+      "signal_words": ["resume", "pick up where", "last session", "continue"]
+    }
+  }
+}
