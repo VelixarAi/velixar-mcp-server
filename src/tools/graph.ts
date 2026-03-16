@@ -7,6 +7,13 @@ import { wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
 import { validateGraphResponse } from '../validate.js';
 
+// M13: Graph traverse usage telemetry
+let _graphTraverseCount = 0;
+let _graphTraverseNoEntity = 0;
+export function getGraphTelemetry() {
+  return { total_calls: _graphTraverseCount, no_entity_calls: _graphTraverseNoEntity, listing_pct: _graphTraverseCount > 0 ? Math.round((_graphTraverseNoEntity / _graphTraverseCount) * 100) : 0 };
+}
+
 export const graphTools: Tool[] = [
   {
     name: 'velixar_graph_traverse',
@@ -34,6 +41,10 @@ export async function handleGraphTool(
   config: ApiConfig,
 ): Promise<{ text: string; isError?: boolean }> {
   if (name === 'velixar_graph_traverse') {
+    // M13: Usage telemetry — track query patterns
+    _graphTraverseCount++;
+    if (!args.entity) _graphTraverseNoEntity++;
+
     try {
       const raw = await api.post<unknown>('/graph/traverse', {
         entity: args.entity,

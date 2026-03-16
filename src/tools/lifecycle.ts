@@ -357,6 +357,9 @@ export async function handleLifecycleTool(
         }],
         stored_count: 1, skipped_count: 0, contradictions_found: contradictionsFound,
         quality: { score: qualityScore, issues: qualityIssues, word_count: words },
+        // M4: Aging grace period — signal to backend that source episodic memories
+        // should not be archived until distillation completeness is verified
+        archival_policy: { min_age_days: 7, require_completeness_check: sourceIds.length > 0 },
       }, config)),
     };
   }
@@ -375,7 +378,20 @@ export async function handleLifecycleTool(
     });
 
     if (result.error) throw new Error(result.error);
-    return { text: JSON.stringify(wrapResponse({ session_id: sessionId, stored_id: result.id, tags }, config)) };
+
+    // M27: Dual session storage — also store a compact summary version for session_resume
+    const compactSummary = summary.length > 500 ? summary.slice(0, 500) + '…' : summary;
+    try {
+      await api.post('/memory', {
+        content: `[Session ${sessionId} summary] ${compactSummary}`,
+        user_id: config.userId,
+        tier: 2,
+        tags: [...tags, 'session_summary'],
+        author: { type: 'agent', session_id: sessionId },
+      });
+    } catch { /* non-blocking — raw is the primary */ }
+
+    return { text: JSON.stringify(wrapResponse({ session_id: sessionId, stored_id: result.id, tags, dual_stored: true }, config)) };
   }
 
   if (name === 'velixar_session_recall') {
@@ -931,13 +947,22 @@ export async function handleLifecycleTool(
       error: r.status === 'rejected' ? String(r.reason) : undefined,
     }));
 
+    const importedCount = statuses.filter(s => s.status === 'ok').length;
     return {
       text: JSON.stringify(wrapResponse({
-        imported: statuses.filter(s => s.status === 'ok').length,
+        imported: importedCount,
         failed: statuses.filter(s => s.status === 'error').length,
         total: items.length,
         items: statuses,
         ...(source ? { source } : {}),
+        // M21: Extraction status — graph/entity extraction happens async after import
+        extraction_status: importedCount > 0 ? {
+          state: 'pending',
+          estimated_completion: `${Math.ceil(importedCount * 2)}s`, // ~2s per memory for extraction
+          hint: 'Entity extraction runs asynchronously. Graph relationships will appear after processing completes.',
+        } : undefined,
+        // M22: Rate limit hint for large imports
+        ...(items.length > 20 ? { rate_limit_hint: 'Large import — consider splitting into batches of 20 for optimal extraction throughput.' } : {}),
       }, config)),
     };
   }

@@ -54,6 +54,14 @@ results.push({
   details: `${needles} fixtures with needle-in-haystack tests`,
 });
 
+// M15: Tool Gap Detection — flag if graph-related prompts have low coverage
+const graphTools = ['velixar_graph_traverse'];
+const graphPrompts = prompts.filter(p => graphTools.includes(p.expected));
+const graphCoverage = graphPrompts.length > 0 ? graphPrompts.length / prompts.length : 0;
+if (graphPrompts.length < 5) {
+  console.log(`⚠ M15: Only ${graphPrompts.length} graph-related prompts — consider adding more for gap detection`);
+}
+
 // Print
 console.log('\n═══ Velixar Benchmark Results ═══\n');
 for (const r of results) {
