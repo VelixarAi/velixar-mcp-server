@@ -361,14 +361,31 @@ export async function handleCognitiveTool(
       true,
     );
 
-    const patterns = (result.patterns || []).map((p: any) => ({
-      name: p.name || p.id,
-      problem_signature: p.problem || p.context || '',
-      prior_solution: p.solution || '',
-      confidence: p.confidence ?? 0.5,
-      supporting_memories: p.supporting_memories || [],
-      occurrence_count: p.occurrence_count || p.frequency || 0,
-    }));
+    const patterns = (result.patterns || []).map((p: any) => {
+      const occurrences = p.occurrence_count || p.frequency || 0;
+      const memoryIds: string[] = p.supporting_memories || [];
+      const rawConfidence = p.confidence ?? 0.5;
+
+      // H18: Confidence decay — fewer supporting memories or old patterns get reduced confidence
+      let adjustedConfidence = rawConfidence;
+      if (occurrences < 3) adjustedConfidence *= 0.7; // weak support
+      if (occurrences < 2) adjustedConfidence *= 0.5; // very weak
+
+      // H19: Causal indicator — check if supporting memories have temporal ordering
+      const patternType: 'temporal' | 'co-occurrence' = (p.temporal_order || p.ordered) ? 'temporal' : 'co-occurrence';
+
+      return {
+        name: p.name || p.id,
+        problem_signature: p.problem || p.context || '',
+        prior_solution: p.solution || '',
+        confidence: Math.round(adjustedConfidence * 100) / 100,
+        confidence_raw: rawConfidence,
+        supporting_memories: memoryIds,
+        occurrence_count: occurrences,
+        pattern_type: patternType, // H19
+        ...(adjustedConfidence < rawConfidence ? { confidence_decay_reason: `Only ${occurrences} supporting observation${occurrences !== 1 ? 's' : ''}` } : {}),
+      };
+    });
 
     return {
       text: JSON.stringify(wrapResponse(

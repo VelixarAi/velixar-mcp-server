@@ -5,7 +5,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
 import { wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
-import { getTimings, getRetryStats, getCircuitState } from '../api.js';
+import { getTimings, getRetryStats, getCircuitState, getRateLimitInfo } from '../api.js';
 
 const VERSION = '0.5.0';
 
@@ -115,6 +115,7 @@ export async function handleSystemTool(
         retry_count: stats.retryCount,
         fallback_count: stats.fallbackCount,
         circuit_breaker: circuit,
+        rate_limit: getRateLimitInfo(), // H16
         version: VERSION,
       }, config)),
     };
@@ -149,14 +150,19 @@ export async function handleSystemTool(
     const mode = args.mode as string | undefined;
     if (mode) {
       // Set mode
+      let verified = false;
       try {
         await api.patch('/settings/security', { mode });
-        currentSecurityMode = mode;
+        // H32: Read-back verification
+        const readback = await api.get<{ mode?: string }>('/settings/security', true);
+        verified = readback.mode === mode;
+        currentSecurityMode = readback.mode || mode;
       } catch {
         // Backend may not support this yet — store locally
         currentSecurityMode = mode;
+        verified = false;
       }
-      return { text: JSON.stringify(wrapResponse({ mode: currentSecurityMode, updated: true }, config)) };
+      return { text: JSON.stringify(wrapResponse({ mode: currentSecurityMode, updated: true, verified }, config)) };
     }
     return { text: JSON.stringify(wrapResponse({ mode: currentSecurityMode }, config)) };
   }

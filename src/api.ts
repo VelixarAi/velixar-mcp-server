@@ -42,6 +42,7 @@ function resolveWorkspace(): { id: string; source: ApiConfig['workspaceSource'] 
 // ── Workspace Cross-Validation ──
 
 let clientRoots: string[] = [];
+let lastSeenWorkspaceId: string | null = null; // H4: Track workspace changes mid-session
 
 export function setClientRoots(roots: Array<{ uri: string; name?: string }>): void {
   clientRoots = roots.map(r => {
@@ -55,6 +56,15 @@ export function setClientRoots(roots: Array<{ uri: string; name?: string }>): vo
 
 export function validateWorkspace(config: ApiConfig): string | null {
   if (!config.workspaceId || clientRoots.length === 0) return null;
+
+  // H4: Detect workspace change mid-session
+  if (lastSeenWorkspaceId && lastSeenWorkspaceId !== config.workspaceId) {
+    const warning = `Workspace changed mid-session: "${lastSeenWorkspaceId}" → "${config.workspaceId}". Memories from this point go to the new workspace.`;
+    lastSeenWorkspaceId = config.workspaceId;
+    return warning;
+  }
+  lastSeenWorkspaceId = config.workspaceId;
+
   // If client provided roots and none match our workspace, warn
   const match = clientRoots.some(root =>
     root === config.workspaceId || root.includes(config.workspaceId) || config.workspaceId.includes(root),
@@ -75,6 +85,17 @@ export function loadConfig(): ApiConfig {
   }
 
   const ws = resolveWorkspace();
+
+  // H5: Stale env var detection — warn if VELIXAR_WORKSPACE_ID doesn't match git root
+  if (ws.source === 'env') {
+    try {
+      const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8', timeout: 2000, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      const gitDir = gitRoot.split('/').pop();
+      if (gitDir && gitDir !== ws.id && !ws.id.includes(gitDir)) {
+        log('warn', 'stale_workspace_env', { env_workspace: ws.id, git_root: gitDir, hint: 'VELIXAR_WORKSPACE_ID may be stale — it does not match the current git root' });
+      }
+    } catch { /* not a git repo — can't validate */ }
+  }
 
   return {
     apiKey,
@@ -111,6 +132,11 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 60_000; // 1 minute
+
+// H16: Rate limit tracking
+let _rateLimitRemaining = -1; // -1 = unknown
+let _rateLimitTotal = -1;
+export function getRateLimitInfo() { return { remaining: _rateLimitRemaining, total: _rateLimitTotal }; }
 
 function getCached(key: string): CacheEntry | undefined {
   const entry = cache.get(key);
@@ -260,6 +286,14 @@ export class ApiClient {
         const data = await res.json() as T;
         const duration = Date.now() - start;
         recordTiming(path, duration, false);
+
+        // H16: Track rate limit headers for budget awareness
+        const remaining = res.headers.get('x-ratelimit-remaining');
+        const limit = res.headers.get('x-ratelimit-limit');
+        if (remaining !== null) {
+          _rateLimitRemaining = parseInt(remaining, 10);
+          _rateLimitTotal = limit ? parseInt(limit, 10) : _rateLimitTotal;
+        }
 
         if (this.config.debug) {
           log('debug', 'api_call', { path, duration_ms: duration });
