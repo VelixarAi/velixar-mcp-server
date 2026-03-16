@@ -1,0 +1,56 @@
+name: 'Velixar Decision Capture'
+description: 'On issue close with "decision" label, store resolution as a decision memory'
+inputs:
+  api_key:
+    description: 'Velixar API key'
+    required: true
+  api_url:
+    description: 'Velixar API base URL'
+    required: false
+    default: 'https://api.velixar.ai/v1'
+  label:
+    description: 'Label that triggers capture'
+    required: false
+    default: 'decision'
+runs:
+  using: 'composite'
+  steps:
+    - name: Check for decision label
+      id: check
+      shell: bash
+      run: |
+        LABELS='${{ toJSON(github.event.issue.labels.*.name) }}'
+        if echo "$LABELS" | jq -e 'map(select(. == "${{ inputs.label }}")) | length > 0' > /dev/null 2>&1; then
+          echo "has_label=true" >> $GITHUB_OUTPUT
+        else
+          echo "has_label=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Store decision memory
+      if: steps.check.outputs.has_label == 'true'
+      shell: bash
+      env:
+        VELIXAR_API_KEY: ${{ inputs.api_key }}
+        VELIXAR_API_URL: ${{ inputs.api_url }}
+      run: |
+        TITLE="${{ github.event.issue.title }}"
+        BODY="${{ github.event.issue.body }}"
+        NUM="${{ github.event.issue.number }}"
+        REPO="${{ github.repository }}"
+
+        CONTENT="Decision: ${TITLE}
+
+${BODY}
+
+Issue: ${REPO}#${NUM}
+Closed: ${{ github.event.issue.closed_at }}"
+
+        curl -s -X POST "${VELIXAR_API_URL}/webhook/ci" \
+          -H "Authorization: Bearer ${VELIXAR_API_KEY}" \
+          -H "Content-Type: application/json" \
+          -d "$(jq -n \
+            --arg content "$CONTENT" \
+            --arg event_type "decision" \
+            --arg issue_number "$NUM" \
+            --arg repo "$REPO" \
+            '{content: $content, event_type: $event_type, tags: ["decision"], issue_number: $issue_number, repo: $repo}')"

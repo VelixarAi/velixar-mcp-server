@@ -103,12 +103,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     log('error', 'tool_error', { tool: name, duration_ms: Date.now() - start, error: msg });
+    // Alert-level for critical failures
+    if (name === 'velixar_store' || name === 'velixar_batch_store' || name === 'velixar_import') {
+      log('error', 'alert:memory_store_failure', { tool: name, error: msg });
+    }
     return {
       content: [{ type: 'text' as const, text: `Error: ${msg}` }],
       isError: true,
     };
   }
 });
+
+// ── Health Check HTTP Server (optional) ──
+
+const healthPort = process.env.VELIXAR_HEALTH_PORT ? parseInt(process.env.VELIXAR_HEALTH_PORT, 10) : 0;
+if (healthPort > 0) {
+  const { createServer } = await import('node:http');
+  createServer(async (_req, res) => {
+    try {
+      const health = await api.get<Record<string, unknown>>('/health', true);
+      const circuit = (await import('./api.js')).getCircuitState();
+      const status = circuit.open ? 503 : 200;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: circuit.open ? 'degraded' : 'ok', circuit, api: health }));
+    } catch {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'error' }));
+    }
+  }).listen(healthPort, () => log('info', 'health_server_started', { port: healthPort }));
+}
 
 // ── Start ──
 

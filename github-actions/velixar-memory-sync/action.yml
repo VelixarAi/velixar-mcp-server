@@ -1,0 +1,47 @@
+name: 'Velixar Memory Sync'
+description: 'On PR merge, distill commit messages + PR description into Velixar memories'
+inputs:
+  api_key:
+    description: 'Velixar API key'
+    required: true
+  api_url:
+    description: 'Velixar API base URL'
+    required: false
+    default: 'https://api.velixar.ai/v1'
+runs:
+  using: 'composite'
+  steps:
+    - name: Distill PR into memory
+      shell: bash
+      env:
+        VELIXAR_API_KEY: ${{ inputs.api_key }}
+        VELIXAR_API_URL: ${{ inputs.api_url }}
+      run: |
+        PR_TITLE="${{ github.event.pull_request.title }}"
+        PR_BODY="${{ github.event.pull_request.body }}"
+        PR_NUM="${{ github.event.pull_request.number }}"
+        REPO="${{ github.repository }}"
+        MERGE_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+
+        # Get commit messages from the PR
+        COMMITS=$(git log --oneline --format="%s" HEAD~10..HEAD 2>/dev/null | head -20 || echo "")
+
+        CONTENT="PR #${PR_NUM} merged: ${PR_TITLE}
+
+${PR_BODY}
+
+Commits:
+${COMMITS}
+
+Repository: ${REPO}
+Merge SHA: ${MERGE_SHA}"
+
+        curl -s -X POST "${VELIXAR_API_URL}/webhook/ci" \
+          -H "Authorization: Bearer ${VELIXAR_API_KEY}" \
+          -H "Content-Type: application/json" \
+          -d "$(jq -n \
+            --arg content "$CONTENT" \
+            --arg event_type "pr_merge" \
+            --arg pr_number "$PR_NUM" \
+            --arg repo "$REPO" \
+            '{content: $content, event_type: $event_type, tags: ["pr-merge"], pr_number: $pr_number, repo: $repo}')"
