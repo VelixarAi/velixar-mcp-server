@@ -153,42 +153,66 @@ export async function handleCognitiveTool(
       true,
     );
 
-    const items = (result.contradictions || []).map((c: any) => ({
-      id: c.id,
-      statement_a: c.statement_a || c.memory_a_content || '',
-      statement_b: c.statement_b || c.memory_b_content || '',
-      memory_id_a: c.memory_a_id,
-      memory_id_b: c.memory_b_id,
-      severity: c.severity || 'medium',
-      confidence: c.confidence ?? 0.5,
-      explanation: c.explanation || c.description,
-      workspace_id: config.workspaceId,
-      detected_at: c.detected_at || c.created_at || '',
-    }));
+    // Temporal supersession threshold: if two conflicting memories are >7 days apart,
+    // classify as "superseded" (temporal update) rather than "contradiction"
+    const SUPERSESSION_DAYS = 7;
+
+    const items = (result.contradictions || []).map((c: Record<string, unknown>) => {
+      const detectedA = String(c.memory_a_created_at || c.created_at_a || '');
+      const detectedB = String(c.memory_b_created_at || c.created_at_b || '');
+      let classification: 'contradiction' | 'superseded' = 'contradiction';
+
+      if (detectedA && detectedB) {
+        const timeA = new Date(detectedA).getTime();
+        const timeB = new Date(detectedB).getTime();
+        if (!isNaN(timeA) && !isNaN(timeB)) {
+          const daysDiff = Math.abs(timeB - timeA) / (1000 * 60 * 60 * 24);
+          if (daysDiff > SUPERSESSION_DAYS) classification = 'superseded';
+        }
+      }
+
+      return {
+        id: String(c.id || ''),
+        statement_a: String(c.statement_a || c.memory_a_content || ''),
+        statement_b: String(c.statement_b || c.memory_b_content || ''),
+        memory_id_a: String(c.memory_a_id || ''),
+        memory_id_b: String(c.memory_b_id || ''),
+        severity: String(c.severity || 'medium'),
+        confidence: typeof c.confidence === 'number' ? c.confidence : 0.5,
+        explanation: String(c.explanation || c.description || ''),
+        workspace_id: config.workspaceId,
+        detected_at: String(c.detected_at || c.created_at || ''),
+        classification,
+      };
+    });
+
+    const activeContradictions = items.filter(i => i.classification === 'contradiction');
+    const superseded = items.filter(i => i.classification === 'superseded');
 
     return {
       text: JSON.stringify(wrapResponse(
         {
-          // Resolution output form per strategy memo
-          conflict_summary: `${items.length} contradiction${items.length !== 1 ? 's' : ''} detected in workspace`,
-          evidence: items,
-          likely_interpretation: items.length > 0
-            ? `${items.filter(i => i.severity === 'high').length} high-severity conflicts require attention`
+          conflict_summary: `${activeContradictions.length} active contradiction${activeContradictions.length !== 1 ? 's' : ''}, ${superseded.length} superseded (temporal updates)`,
+          evidence: activeContradictions,
+          superseded,
+          likely_interpretation: activeContradictions.length > 0
+            ? `${activeContradictions.filter(i => i.severity === 'high').length} high-severity conflicts require attention`
             : 'No active contradictions — beliefs are consistent',
-          next_step: items.length > 0
+          next_step: activeContradictions.length > 0
             ? 'Use velixar_inspect on linked memory IDs to understand each side, then velixar_timeline to trace belief evolution'
             : null,
-          count: items.length,
+          count: activeContradictions.length,
+          superseded_count: superseded.length,
           justification: justify(
-            `${items.length} contradiction${items.length !== 1 ? 's' : ''} detected in workspace`,
-            items.length > 0 ? 'retrieved_fact' : 'synthesized_summary',
+            `${activeContradictions.length} contradiction${activeContradictions.length !== 1 ? 's' : ''} detected, ${superseded.length} classified as temporal supersession`,
+            activeContradictions.length > 0 ? 'retrieved_fact' : 'synthesized_summary',
             [],
             config.workspaceId,
-            { contradictionCount: items.length },
+            { contradictionCount: activeContradictions.length },
           ),
         },
         config,
-        { data_absent: items.length === 0, contradictions_present: items.length > 0 },
+        { data_absent: items.length === 0, contradictions_present: activeContradictions.length > 0 },
       )),
     };
   }

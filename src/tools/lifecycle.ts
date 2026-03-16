@@ -3,9 +3,33 @@
 // Phase 3: batch, consolidate, retag, session
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { createHash } from 'node:crypto';
 import type { ApiClient } from '../api.js';
 import { wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
+
+// ── Idempotency Cache ──
+// Tracks content hashes of recently stored memories to prevent duplicates on retry.
+// TTL: 5 minutes. Keyed by content hash.
+const idempotencyCache = new Map<string, { id: string; timestamp: number }>();
+const IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
+
+function contentHash(content: string): string {
+  return createHash('sha256').update(content.trim().toLowerCase()).digest('hex').slice(0, 16);
+}
+
+function checkIdempotency(content: string): string | null {
+  const hash = contentHash(content);
+  const entry = idempotencyCache.get(hash);
+  if (entry && Date.now() - entry.timestamp < IDEMPOTENCY_TTL_MS) return entry.id;
+  // Clean expired
+  if (entry) idempotencyCache.delete(hash);
+  return null;
+}
+
+function recordIdempotency(content: string, id: string): void {
+  idempotencyCache.set(contentHash(content), { id, timestamp: Date.now() });
+}
 
 // Simple keyword-based auto-tagging when user provides no tags
 const TAG_PATTERNS: Array<[RegExp, string]> = [
@@ -332,23 +356,32 @@ export async function handleLifecycleTool(
   if (name === 'velixar_batch_store') {
     const items = (args.items as Array<{ content: string; tags?: string[]; tier?: number }>).slice(0, 20);
     const results = await Promise.allSettled(
-      items.map(item =>
-        api.post<{ id?: string; error?: string }>('/memory', {
+      items.map(async item => {
+        // Idempotency: skip if same content was stored recently
+        const existingId = checkIdempotency(item.content);
+        if (existingId) return { id: existingId, deduplicated: true };
+        const res = await api.post<{ id?: string; error?: string }>('/memory', {
           content: item.content,
           user_id: config.userId,
           tier: item.tier ?? 2,
           tags: item.tags || autoTags(item.content),
           author: { type: 'user' },
-        }),
-      ),
+        });
+        if (res.id) recordIdempotency(item.content, res.id);
+        return res;
+      }),
     );
 
-    const statuses = results.map((r, i) => ({
-      index: i,
-      status: r.status === 'fulfilled' && !r.value.error ? 'ok' : 'error',
-      id: r.status === 'fulfilled' ? r.value.id : undefined,
-      error: r.status === 'rejected' ? String(r.reason) : r.status === 'fulfilled' ? r.value.error : undefined,
-    }));
+    const statuses = results.map((r, i) => {
+      const val = r.status === 'fulfilled' ? r.value as Record<string, unknown> : null;
+      return {
+        index: i,
+        status: r.status === 'fulfilled' && !val?.error ? 'ok' : 'error',
+        id: val?.id as string | undefined,
+        deduplicated: val?.deduplicated === true,
+        error: r.status === 'rejected' ? String(r.reason) : val?.error ? String(val.error) : undefined,
+      };
+    });
 
     return {
       text: JSON.stringify(wrapResponse({
@@ -551,14 +584,18 @@ export async function handleLifecycleTool(
     if (items.length > 50) items = items.slice(0, 50);
 
     const results = await Promise.allSettled(
-      items.map(item =>
-        api.post<{ id?: string; error?: string }>('/memory/store', {
+      items.map(async item => {
+        const existingId = checkIdempotency(item.content);
+        if (existingId) return { id: existingId, deduplicated: true } as { id?: string; error?: string; deduplicated?: boolean };
+        const res = await api.post<{ id?: string; error?: string }>('/memory/store', {
           content: item.content,
           tags: [...(item.tags || []), ...defaultTags, ...(source ? [`source:${source}`] : [])],
           tier: item.tier ?? 2,
           user_id: config.userId,
-        }),
-      ),
+        });
+        if (res.id) recordIdempotency(item.content, res.id);
+        return res;
+      }),
     );
 
     const statuses = results.map((r, i) => ({

@@ -26,12 +26,28 @@ runs:
         # Get commit messages from the PR
         COMMITS=$(git log --oneline --format="%s" HEAD~10..HEAD 2>/dev/null | head -20 || echo "")
 
+        # Quality gate: filter out low-value commit messages
+        QUALITY_COMMITS=""
+        while IFS= read -r line; do
+          # Skip empty, too short, or low-value patterns
+          [ ${#line} -lt 10 ] && continue
+          echo "$line" | grep -qiE '^(fix|wip|update|merge branch|merge pull|bump|typo|lint|fmt|format|\.)\s*$' && continue
+          QUALITY_COMMITS="${QUALITY_COMMITS}${line}\n"
+        done <<< "$COMMITS"
+
+        # Skip entirely if PR title + body + commits are too thin
+        TOTAL_LEN=$(( ${#PR_TITLE} + ${#PR_BODY} + ${#QUALITY_COMMITS} ))
+        if [ "$TOTAL_LEN" -lt 30 ]; then
+          echo "Skipping: content too thin (${TOTAL_LEN} chars)"
+          exit 0
+        fi
+
         CONTENT="PR #${PR_NUM} merged: ${PR_TITLE}
 
 ${PR_BODY}
 
 Commits:
-${COMMITS}
+${QUALITY_COMMITS}
 
 Repository: ${REPO}
 Merge SHA: ${MERGE_SHA}"
