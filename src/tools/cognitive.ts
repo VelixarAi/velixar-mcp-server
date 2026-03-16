@@ -167,7 +167,15 @@ export async function handleCognitiveTool(
     return {
       text: JSON.stringify(wrapResponse(
         {
-          contradictions: items,
+          // Resolution output form per strategy memo
+          conflict_summary: `${items.length} contradiction${items.length !== 1 ? 's' : ''} detected in workspace`,
+          evidence: items,
+          likely_interpretation: items.length > 0
+            ? `${items.filter(i => i.severity === 'high').length} high-severity conflicts require attention`
+            : 'No active contradictions — beliefs are consistent',
+          next_step: items.length > 0
+            ? 'Use velixar_inspect on linked memory IDs to understand each side, then velixar_timeline to trace belief evolution'
+            : null,
           count: items.length,
           justification: justify(
             `${items.length} contradiction${items.length !== 1 ? 's' : ''} detected in workspace`,
@@ -210,11 +218,27 @@ export async function handleCognitiveTool(
             previous_memory_id: (m as any).previous_memory_id || null,
           };
         })
-        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        // Prefer episodic memories (event-specific), then sort by time
+        .sort((a, b) => {
+          if (a.memory_type === 'episodic' && b.memory_type !== 'episodic') return -1;
+          if (a.memory_type !== 'episodic' && b.memory_type === 'episodic') return 1;
+          return a.timestamp.localeCompare(b.timestamp);
+        });
+
+      // Timeline output form per strategy memo
+      const changePoints = entries.filter((e, i) =>
+        i > 0 && e.tags.some(t => entries[i - 1].tags.indexOf(t) === -1),
+      );
 
       return {
         text: JSON.stringify(wrapResponse(
-          { entries, count: entries.length },
+          {
+            phases: entries,
+            key_change_points: changePoints.map(e => ({ id: e.id, summary: e.summary, timestamp: e.timestamp })),
+            current_state: entries.length > 0 ? entries[entries.length - 1].summary : null,
+            uncertainty: entries.length < 3 ? 'Limited data — timeline may be incomplete' : null,
+            count: entries.length,
+          },
           config,
           { data_absent: entries.length === 0 },
         )),
