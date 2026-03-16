@@ -150,6 +150,20 @@ export const lifecycleTools: Tool[] = [
       required: ['memory_ids'],
     },
   },
+  {
+    name: 'velixar_export',
+    description:
+      'Export memories as structured data. Supports JSON and Markdown formats. ' +
+      'Includes tags, timestamps, and provenance. Use for backup or sharing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        format: { type: 'string', enum: ['json', 'markdown'], description: 'Export format (default: json)' },
+        query: { type: 'string', description: 'Optional: filter by search query' },
+        limit: { type: 'number', description: 'Max memories to export (default 50)' },
+      },
+    },
+  },
 ];
 
 export async function handleLifecycleTool(
@@ -437,6 +451,43 @@ export async function handleLifecycleTool(
       text: JSON.stringify(wrapResponse({
         items: statuses,
         updated_count: statuses.filter(s => s.status === 'ok').length,
+      }, config)),
+    };
+  }
+
+  if (name === 'velixar_export') {
+    const format = (args.format as string) || 'json';
+    const limit = Math.min((args.limit as number) || 50, 200);
+    const query = args.query as string | undefined;
+
+    let memories: Array<Record<string, unknown>> = [];
+    if (query) {
+      const params = new URLSearchParams({ q: query, user_id: config.userId, limit: String(limit) });
+      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
+      memories = result.memories || [];
+    } else {
+      const params = new URLSearchParams({ user_id: config.userId, limit: String(limit) });
+      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/list?${params}`, true);
+      memories = result.memories || [];
+    }
+
+    if (format === 'markdown') {
+      const md = memories.map((m: any) => {
+        const tags = m.tags?.length ? `Tags: ${m.tags.join(', ')}` : '';
+        const date = m.created_at || '';
+        return `## ${m.id}\n${date ? `*${date}*\n` : ''}\n${m.content}\n\n${tags}`;
+      }).join('\n\n---\n\n');
+      return { text: JSON.stringify(wrapResponse({ format: 'markdown', count: memories.length, content: md }, config)) };
+    }
+
+    return {
+      text: JSON.stringify(wrapResponse({
+        format: 'json',
+        count: memories.length,
+        memories: memories.map((m: any) => ({
+          id: m.id, content: m.content, tags: m.tags || [],
+          created_at: m.created_at, tier: m.tier,
+        })),
       }, config)),
     };
   }
