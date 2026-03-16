@@ -14,7 +14,7 @@ import {
   GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { loadConfig, ApiClient, log } from './api.js';
+import { loadConfig, ApiClient, log, setClientRoots, validateWorkspace } from './api.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
 import { systemTools, handleSystemTool } from './tools/system.js';
 import { recallTools, handleRecallTool } from './tools/recall.js';
@@ -51,6 +51,18 @@ const server = new Server(
 // ── Resources ──
 
 fetchRecall(api, config); // non-blocking startup
+
+// Capture client roots for workspace cross-validation
+server.oninitialized = async () => {
+  try {
+    const rootsResult = await server.listRoots();
+    if (rootsResult?.roots?.length) {
+      setClientRoots(rootsResult.roots);
+      const warning = validateWorkspace(config);
+      if (warning) log('warn', 'workspace_mismatch', { warning, workspace: config.workspaceId, roots: rootsResult.roots.map(r => r.uri) });
+    }
+  } catch { /* host doesn't support roots — that's fine */ }
+};
 
 server.setRequestHandler(ListResourcesRequestSchema, async () => getResourceList());
 server.setRequestHandler(ReadResourceRequestSchema, async (req) => readResource(req.params.uri, api));
@@ -89,6 +101,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     log('info', 'tool_call', { tool: name, duration_ms: Date.now() - start, error: false });
 
+    // Workspace cross-validation warning
+    const wsWarning = validateWorkspace(config);
+    let responseText = result.text;
+    if (wsWarning) {
+      try {
+        const parsed = JSON.parse(responseText);
+        parsed._workspace_warning = wsWarning;
+        responseText = JSON.stringify(parsed);
+      } catch { /* non-JSON response, skip */ }
+    }
+
     // Track tool calls for resource staleness; refresh after mutations
     markToolCall();
     const mutationTools = new Set(['velixar_store', 'velixar_update', 'velixar_delete', 'velixar_distill']);
@@ -97,7 +120,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     return {
-      content: [{ type: 'text' as const, text: result.text }],
+      content: [{ type: 'text' as const, text: responseText }],
       ...(result.isError ? { isError: true } : {}),
     };
   } catch (error) {

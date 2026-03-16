@@ -273,7 +273,8 @@ export async function readResource(uri: string, api?: ApiClient) {
     const domain = decodeURIComponent(shadowMatch[1]);
     try {
       const result = await api.post<Record<string, unknown>>('/graph/search', { query: domain, limit: 50 });
-      const entities = (result as any).entities || (result as any).results || [];
+      const r = result as Record<string, unknown>;
+      const entities = Array.isArray(r.entities) ? r.entities : Array.isArray(r.results) ? r.results : [];
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify({ domain, entities, count: entities.length }) }] };
     } catch {
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify({ domain, entities: [], count: 0, error: 'Graph search unavailable' }) }] };

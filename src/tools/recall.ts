@@ -7,6 +7,7 @@ import type { ApiClient } from '../api.js';
 import { normalizeMemory, wrapResponse } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { justify } from '../justify.js';
+import { validateSearchResponse, validateListResponse, validateOverviewResponse } from '../validate.js';
 
 export const recallTools: Tool[] = [
   {
@@ -57,20 +58,20 @@ export async function handleRecallTool(
 
     const startMs = Date.now();
     const [searchRes, listRes, overviewRes, contradictionsRes] = await Promise.allSettled([
-      api.get<{ memories?: Array<Record<string, unknown>>; count?: number }>(`/memory/search?${params}`, true),
-      api.get<{ memories?: Array<Record<string, unknown>>; count?: number }>(`/memory/list?${listParams}`, true),
-      api.get<Record<string, unknown>>('/exocortex/overview', true),
+      api.get<unknown>(`/memory/search?${params}`, true),
+      api.get<unknown>(`/memory/list?${listParams}`, true),
+      api.get<unknown>('/exocortex/overview', true),
       api.get<{ contradictions?: Array<Record<string, unknown>> }>('/exocortex/contradictions?status=open', true),
     ]);
 
-    const search = searchRes.status === 'fulfilled' ? searchRes.value : null;
-    const list = listRes.status === 'fulfilled' ? listRes.value : null;
-    const overview = overviewRes.status === 'fulfilled' ? overviewRes.value : null;
+    const search = searchRes.status === 'fulfilled' ? validateSearchResponse(searchRes.value, '/memory/search') : null;
+    const list = listRes.status === 'fulfilled' ? validateListResponse(listRes.value, '/memory/list') : null;
+    const overview = overviewRes.status === 'fulfilled' ? validateOverviewResponse(overviewRes.value, '/exocortex/overview') : null;
     const contradictions = contradictionsRes.status === 'fulfilled' ? contradictionsRes.value : null;
 
     // Normalize search results — prefer semantic for context, episodic for evidence
     const relevantFacts = (search?.memories || []).map(m => {
-      const mem = normalizeMemory(m as any);
+      const mem = normalizeMemory(m);
       mem.workspace_id = config.workspaceId;
       return mem;
     });
@@ -83,7 +84,7 @@ export async function handleRecallTool(
 
     // Recent activity from list
     const recentItems = (list?.memories || []).map(m => {
-      const mem = normalizeMemory(m as any);
+      const mem = normalizeMemory(m);
       mem.workspace_id = config.workspaceId;
       return mem;
     });
@@ -99,7 +100,7 @@ export async function handleRecallTool(
     // Build brief
     const brief = {
       summary: overview
-        ? `Workspace has ${(overview as any).total_memories || 0} memories, ${(overview as any).cortex_nodes || 0} entities, ${(overview as any).temporal_chains || 0} chains. Mode: ${(overview as any).system_mode || 'unknown'}.`
+        ? `Workspace has ${overview.total_memories || 0} memories, ${overview.cortex_nodes || 0} entities, ${overview.temporal_chains || 0} chains. Mode: ${overview.system_mode || 'unknown'}.`
         : `${relevantFacts.length} relevant facts found${topic ? ` for "${topic}"` : ''}.`,
       relevant_facts: relevantFacts,
       recent_activity: compact ? recentItems.slice(0, 3) : recentItems,
@@ -108,7 +109,7 @@ export async function handleRecallTool(
       pattern_hints: [] as string[],
       justification: justify(
         overview
-          ? `Workspace context synthesis from ${(overview as any).total_memories || 0} memories`
+          ? `Workspace context synthesis from ${overview.total_memories || 0} memories`
           : `Context synthesis from ${relevantFacts.length} relevant facts`,
         'synthesized_summary',
         relevantFacts as MemoryItem[],
@@ -132,11 +133,25 @@ export async function handleRecallTool(
 
   if (name === 'velixar_inspect') {
     const id = args.memory_id as string;
-    const result = await api.get<{ memory?: Record<string, unknown>; error?: string }>(`/memory/${id}`, true);
-    if (result.error) throw new Error(result.error);
-    if (!result.memory) throw new Error(`Memory ${id} not found`);
+    const raw = await api.get<unknown>(`/memory/${id}`, true);
+    if (!raw || typeof raw !== 'object') throw new Error(`Memory ${id} not found`);
+    const result = raw as Record<string, unknown>;
+    if (result.error) throw new Error(String(result.error));
+    if (!result.memory || typeof result.memory !== 'object') throw new Error(`Memory ${id} not found`);
 
-    const mem = normalizeMemory(result.memory as any);
+    const rawMem = result.memory as Record<string, unknown>;
+    const mem = normalizeMemory({
+      id: String(rawMem.id || ''),
+      content: String(rawMem.content || ''),
+      score: typeof rawMem.score === 'number' ? rawMem.score : undefined,
+      tier: typeof rawMem.tier === 'number' ? rawMem.tier : undefined,
+      type: typeof rawMem.type === 'string' ? rawMem.type : null,
+      tags: Array.isArray(rawMem.tags) ? rawMem.tags.filter((t): t is string => typeof t === 'string') : [],
+      salience: typeof rawMem.salience === 'number' ? rawMem.salience : undefined,
+      created_at: typeof rawMem.created_at === 'string' ? rawMem.created_at : undefined,
+      updated_at: typeof rawMem.updated_at === 'string' ? rawMem.updated_at : undefined,
+      previous_memory_id: typeof rawMem.previous_memory_id === 'string' ? rawMem.previous_memory_id : null,
+    });
     mem.workspace_id = config.workspaceId;
 
     const justification = justify(

@@ -221,7 +221,7 @@ export async function handleLifecycleTool(
         `/memory/search?${searchParams}`, true,
       );
       const topMatch = existing.memories?.[0];
-      if (topMatch && (topMatch as any).relevance > 0.92) {
+      if (topMatch && typeof (topMatch as Record<string, unknown>).score === 'number' && (topMatch as Record<string, unknown>).score as number > 0.92) {
         duplicateDetected = true;
       }
     } catch { /* non-blocking */ }
@@ -234,7 +234,8 @@ export async function handleLifecycleTool(
       if (contradictions.contradictions?.length) {
         contradictionDetected = true;
         for (const c of contradictions.contradictions.slice(0, 3)) {
-          contradictionsFound.push((c as any).explanation || (c as any).description || 'Conflict detected');
+          const entry = c as Record<string, unknown>;
+          contradictionsFound.push(String(entry.explanation || entry.description || 'Conflict detected'));
         }
       }
     } catch { /* non-blocking */ }
@@ -397,8 +398,8 @@ export async function handleLifecycleTool(
       );
       for (const f of fetches) {
         if (f.status === 'fulfilled' && f.value.memory) {
-          const m = f.value.memory as any;
-          candidates.push({ id: m.id, content: m.content || '', tags: m.tags || [] });
+          const m = f.value.memory as Record<string, unknown>;
+          candidates.push({ id: String(m.id || ''), content: String(m.content || ''), tags: Array.isArray(m.tags) ? m.tags.filter((t): t is string => typeof t === 'string') : [] });
         }
       }
     } else if (topic) {
@@ -456,7 +457,8 @@ export async function handleLifecycleTool(
         } else {
           // Fetch current tags
           const mem = await api.get<{ memory?: Record<string, unknown> }>(`/memory/${id}`, true);
-          const current = ((mem.memory as any)?.tags as string[]) || [];
+          const rawTags = (mem.memory && typeof mem.memory === 'object') ? (mem.memory as Record<string, unknown>).tags : undefined;
+          const current = Array.isArray(rawTags) ? rawTags.filter((t): t is string => typeof t === 'string') : [];
           newTags = [...current];
           if (addTags) newTags.push(...addTags.filter(t => !newTags.includes(t)));
           if (removeTags) newTags = newTags.filter(t => !removeTags.includes(t));
@@ -562,7 +564,7 @@ export async function handleLifecycleTool(
     const statuses = results.map((r, i) => ({
       index: i,
       status: r.status === 'fulfilled' ? 'ok' : 'error',
-      id: r.status === 'fulfilled' ? (r.value as any).id : undefined,
+      id: r.status === 'fulfilled' ? (r.value as Record<string, unknown>).id as string | undefined : undefined,
       error: r.status === 'rejected' ? String(r.reason) : undefined,
     }));
 

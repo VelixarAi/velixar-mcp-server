@@ -5,6 +5,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ApiConfig, ApiTiming, MemoryItem, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
+import type { ValidatedRawMemory } from './validate.js';
 
 // ── Workspace Resolution ──
 
@@ -36,6 +37,32 @@ function resolveWorkspace(): { id: string; source: ApiConfig['workspaceSource'] 
 
   // No workspace — will be display-only; backend enforces via API key
   return { id: '', source: 'none' };
+}
+
+// ── Workspace Cross-Validation ──
+
+let clientRoots: string[] = [];
+
+export function setClientRoots(roots: Array<{ uri: string; name?: string }>): void {
+  clientRoots = roots.map(r => {
+    // Extract directory name from file:// URI
+    try {
+      const path = r.uri.replace('file://', '');
+      return path.split('/').pop() || path;
+    } catch { return r.name || r.uri; }
+  }).filter(Boolean);
+}
+
+export function validateWorkspace(config: ApiConfig): string | null {
+  if (!config.workspaceId || clientRoots.length === 0) return null;
+  // If client provided roots and none match our workspace, warn
+  const match = clientRoots.some(root =>
+    root === config.workspaceId || root.includes(config.workspaceId) || config.workspaceId.includes(root),
+  );
+  if (!match) {
+    return `Workspace mismatch: resolved "${config.workspaceId}" (from ${config.workspaceSource}) but host roots are [${clientRoots.join(', ')}]. Memories may be stored in the wrong workspace.`;
+  }
+  return null;
 }
 
 // ── Config ──
@@ -305,7 +332,7 @@ export class ApiClient {
 // ── Response Normalization ──
 // Backend returns raw shapes; normalize to VelixarResponse<T> with MemoryItem.
 
-/** Raw memory shape from backend */
+/** Raw memory shape from backend — use ValidatedRawMemory from validate.ts for new code */
 interface RawMemory {
   id: string;
   content: string;
@@ -320,18 +347,18 @@ interface RawMemory {
   timestamp?: string;
 }
 
-function inferMemoryType(raw: RawMemory): MemoryType {
+function inferMemoryType(raw: RawMemory | ValidatedRawMemory): MemoryType {
   // Tier 0 (pinned) and tier 2 (semantic) → semantic; tier 1 (session) → episodic
   return raw.tier === 1 ? 'episodic' : 'semantic';
 }
 
-function inferSourceType(raw: RawMemory): SourceType {
+function inferSourceType(raw: RawMemory | ValidatedRawMemory): SourceType {
   if (raw.type === 'distill') return 'distill';
   if (raw.type === 'inferred') return 'inferred';
   return 'user';
 }
 
-export function normalizeMemory(raw: RawMemory): MemoryItem {
+export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem {
   return {
     id: raw.id,
     workspace_id: '', // filled by caller

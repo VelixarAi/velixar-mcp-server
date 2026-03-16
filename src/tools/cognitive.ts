@@ -6,6 +6,7 @@ import type { ApiClient } from '../api.js';
 import { normalizeMemory, wrapResponse } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { justify } from '../justify.js';
+import { validateIdentityResponse, validateSearchResponse } from '../validate.js';
 
 export const cognitiveTools: Tool[] = [
   {
@@ -107,33 +108,34 @@ export async function handleCognitiveTool(
     }
 
     // Get: fetch synthesized identity profile
-    const result = await api.get<Record<string, unknown>>('/memory/identity', true);
-    const identity = (result as any).identity || {};
+    const raw = await api.get<unknown>('/memory/identity', true);
+    const result = validateIdentityResponse(raw, '/memory/identity');
+    const identity = result.identity || {};
     const profile = {
-      preferences: identity.preferences || {},
-      expertise: identity.expertise || [],
-      communication_style: identity.communication_style,
-      recurring_goals: identity.recurring_goals || [],
-      stable_constraints: identity.stable_constraints || [],
-      shifts: ((result as any).shifts || []).map((s: any) => ({
-        field: s.field || s.key,
-        from: s.from || s.old_value,
-        to: s.to || s.new_value,
-        timestamp: s.timestamp || s.detected_at,
+      preferences: (identity as Record<string, unknown>).preferences || {},
+      expertise: (identity as Record<string, unknown>).expertise || [],
+      communication_style: (identity as Record<string, unknown>).communication_style,
+      recurring_goals: (identity as Record<string, unknown>).recurring_goals || [],
+      stable_constraints: (identity as Record<string, unknown>).stable_constraints || [],
+      shifts: (result.shifts || []).map(s => ({
+        field: s.field,
+        from: s.from,
+        to: s.to,
+        timestamp: s.timestamp,
       })),
-      contradictions: ((result as any).contradictions || []).map((c: any) => ({
-        existing: c.existing || c.old,
-        new: c.new || c.current,
+      contradictions: (result.contradictions || []).map(c => ({
+        existing: c.existing,
+        new: c.new,
         severity: c.severity,
       })),
-      snapshot_count: (result as any).snapshot_count || 0,
+      snapshot_count: result.snapshot_count || 0,
       workspace_scope: 'workspace_local',
       justification: justify(
         'User identity profile synthesized from stored preferences and behavioral patterns',
         Object.keys(identity).length > 0 ? 'synthesized_summary' : 'hypothesis',
         [],
         config.workspaceId,
-        { contradictionCount: ((result as any).contradictions || []).length },
+        { contradictionCount: (result.contradictions || []).length },
       ),
     };
 
@@ -201,11 +203,12 @@ export async function handleCognitiveTool(
     // Use search to find temporally-related memories, sorted by time
     if (topic) {
       const params = new URLSearchParams({ q: topic, user_id: config.userId, limit: String(limit) });
-      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
+      const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+      const result = validateSearchResponse(raw, '/memory/search');
 
-      const entries = (result.memories || [])
+      const entries = result.memories
         .map(m => {
-          const mem = normalizeMemory(m as any);
+          const mem = normalizeMemory(m);
           mem.workspace_id = config.workspaceId;
           return {
             id: mem.id,
@@ -215,7 +218,7 @@ export async function handleCognitiveTool(
             memory_type: mem.memory_type,
             chain_position: 0,
             tags: mem.tags,
-            previous_memory_id: (m as any).previous_memory_id || null,
+            previous_memory_id: m.previous_memory_id || null,
           };
         })
         // Prefer episodic memories (event-specific), then sort by time
@@ -246,10 +249,22 @@ export async function handleCognitiveTool(
     }
 
     // Start from a specific memory and follow chain links
-    const mem = await api.get<{ memory?: Record<string, unknown> }>(`/memory/${memoryId}`, true);
-    if (!mem.memory) throw new Error(`Memory ${memoryId} not found`);
+    const memResult = await api.get<unknown>(`/memory/${memoryId}`, true);
+    if (!memResult || typeof memResult !== 'object' || !(memResult as Record<string, unknown>).memory) throw new Error(`Memory ${memoryId} not found`);
+    const rawMem = (memResult as Record<string, unknown>).memory as Record<string, unknown>;
 
-    const normalized = normalizeMemory(mem.memory as any);
+    const normalized = normalizeMemory({
+      id: String(rawMem.id || ''),
+      content: String(rawMem.content || ''),
+      score: typeof rawMem.score === 'number' ? rawMem.score : undefined,
+      tier: typeof rawMem.tier === 'number' ? rawMem.tier : undefined,
+      type: typeof rawMem.type === 'string' ? rawMem.type : null,
+      tags: Array.isArray(rawMem.tags) ? rawMem.tags.filter((t): t is string => typeof t === 'string') : [],
+      salience: typeof rawMem.salience === 'number' ? rawMem.salience : undefined,
+      created_at: typeof rawMem.created_at === 'string' ? rawMem.created_at : undefined,
+      updated_at: typeof rawMem.updated_at === 'string' ? rawMem.updated_at : undefined,
+      previous_memory_id: typeof rawMem.previous_memory_id === 'string' ? rawMem.previous_memory_id : null,
+    });
     normalized.workspace_id = config.workspaceId;
 
     return {

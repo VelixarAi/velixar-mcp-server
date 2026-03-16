@@ -6,6 +6,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
 import { normalizeMemory, wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
+import { validateStoreResponse, validateSearchResponse, validateListResponse, validateMutationResponse } from '../validate.js';
 
 export const memoryTools: Tool[] = [
   {
@@ -90,28 +91,24 @@ export async function handleMemoryTool(
   config: ApiConfig,
 ): Promise<{ text: string; isError?: boolean }> {
   if (name === 'velixar_store') {
-    const result = await api.post<{ id?: string; error?: string }>('/memory', {
+    const raw = await api.post<unknown>('/memory', {
       content: args.content,
       user_id: config.userId,
       tier: (args.tier as number) ?? 2,
       tags: (args.tags as string[]) || [],
       author: { type: 'agent', agent_id: config.userId },
     });
-    if (result.error) throw new Error(result.error);
-    if (!result.id) throw new Error('Store succeeded but no ID returned');
+    const result = validateStoreResponse(raw, '/memory');
     return { text: JSON.stringify(wrapResponse({ id: result.id }, config)) };
   }
 
   if (name === 'velixar_search') {
     const params = new URLSearchParams({ q: args.query as string, user_id: config.userId });
     if (args.limit) params.set('limit', String(args.limit));
-    const result = await api.get<{ memories?: Array<Record<string, unknown>>; count?: number; error?: string }>(
-      `/memory/search?${params}`,
-      true,
-    );
-    if (result.error) throw new Error(result.error);
-    let items = (result.memories || []).map(m => {
-      const mem = normalizeMemory(m as any);
+    const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+    const result = validateSearchResponse(raw, '/memory/search');
+    let items = result.memories.map(m => {
+      const mem = normalizeMemory(m);
       mem.workspace_id = config.workspaceId;
       return mem;
     });
@@ -129,15 +126,10 @@ export async function handleMemoryTool(
     const params = new URLSearchParams({ user_id: config.userId });
     if (args.limit) params.set('limit', String(args.limit));
     if (args.cursor) params.set('cursor', args.cursor as string);
-    const result = await api.get<{
-      memories?: Array<Record<string, unknown>>;
-      count?: number;
-      cursor?: string;
-      error?: string;
-    }>(`/memory/list?${params}`, true);
-    if (result.error) throw new Error(result.error);
-    let items = (result.memories || []).map(m => {
-      const mem = normalizeMemory(m as any);
+    const raw = await api.get<unknown>(`/memory/list?${params}`, true);
+    const result = validateListResponse(raw, '/memory/list');
+    let items = result.memories.map(m => {
+      const mem = normalizeMemory(m);
       mem.workspace_id = config.workspaceId;
       return mem;
     });
@@ -155,14 +147,14 @@ export async function handleMemoryTool(
     const body: Record<string, unknown> = { user_id: config.userId };
     if (args.content) body.content = args.content;
     if (args.tags) body.tags = args.tags;
-    const result = await api.patch<{ error?: string }>(`/memory/${args.id}`, body);
-    if (result.error) throw new Error(result.error);
+    const raw = await api.patch<unknown>(`/memory/${args.id}`, body);
+    validateMutationResponse(raw, `/memory/${args.id}`);
     return { text: JSON.stringify(wrapResponse({ id: args.id as string }, config)) };
   }
 
   if (name === 'velixar_delete') {
-    const result = await api.delete<{ error?: string }>(`/memory/${args.id}`);
-    if (result.error) throw new Error(result.error);
+    const raw = await api.delete<unknown>(`/memory/${args.id}`);
+    validateMutationResponse(raw, `/memory/${args.id}`);
     return { text: JSON.stringify(wrapResponse({ id: args.id as string }, config)) };
   }
 

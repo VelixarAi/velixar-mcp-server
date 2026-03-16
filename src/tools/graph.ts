@@ -5,6 +5,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
 import { wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
+import { validateGraphResponse } from '../validate.js';
 
 export const graphTools: Tool[] = [
   {
@@ -34,28 +35,25 @@ export async function handleGraphTool(
 ): Promise<{ text: string; isError?: boolean }> {
   if (name === 'velixar_graph_traverse') {
     try {
-      const result = await api.post<Record<string, unknown>>('/graph/traverse', {
+      const raw = await api.post<unknown>('/graph/traverse', {
         entity: args.entity,
         max_hops: Math.min((args.depth as number) || 2, 10),
       });
-      if ((result as any).error) throw new Error((result as any).error);
+      const result = validateGraphResponse(raw, '/graph/traverse');
 
-      // Normalize to GraphEntity schema
-      const nodes = ((result as any).nodes || []).map((n: any) => ({
-        id: n.id || n.address || n.name,
-        entity_type: n.type || n.entity_type || 'unknown',
-        label: n.name || n.label || n.id,
-        properties: { description: n.description, salience: n.salience },
-        relevance: n.salience ?? n.relevance,
-        confidence: n.confidence,
+      const nodes = result.nodes.map(n => ({
+        id: n.id,
+        entity_type: n.entity_type || 'unknown',
+        label: n.label,
+        properties: n.properties,
+        relevance: n.relevance,
       }));
-      const relations = ((result as any).edges || []).map((e: any) => ({
+      const relations = result.edges.map(e => ({
         source: e.source,
         target: e.target,
-        relationship: e.relationship || e.type || 'related',
+        relationship: e.relationship || 'related',
         direction: 'outbound' as const,
-        relevance: e.weight ?? e.relevance,
-        confidence: e.confidence,
+        relevance: e.relevance,
       }));
       const root = nodes[0] || { id: args.entity, entity_type: 'unknown', label: args.entity as string };
 
@@ -64,7 +62,7 @@ export async function handleGraphTool(
           root,
           relations,
           connected_entities: nodes.slice(1),
-          depth_reached: (result as any).hops ?? 0,
+          depth_reached: result.hops ?? 0,
         }, config, {
           data_absent: nodes.length === 0,
         })),
