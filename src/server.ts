@@ -19,7 +19,7 @@ import { recallTools, handleRecallTool } from './tools/recall.js';
 import { graphTools, handleGraphTool } from './tools/graph.js';
 import { cognitiveTools, handleCognitiveTool } from './tools/cognitive.js';
 import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
-import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity } from './resources.js';
+import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity, refreshRelevantMemories, markToolCall, isRelevantStale } from './resources.js';
 
 // ── Init ──
 
@@ -76,6 +76,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       result = await entry.handler(name, args as Record<string, unknown>, api, config);
+    }
+
+    // Track tool calls for resource staleness; refresh after mutations
+    markToolCall();
+    const mutationTools = new Set(['velixar_store', 'velixar_update', 'velixar_delete', 'velixar_distill']);
+    if (mutationTools.has(name) || isRelevantStale()) {
+      refreshRelevantMemories(api, config); // non-blocking
     }
 
     return {

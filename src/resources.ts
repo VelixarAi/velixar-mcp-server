@@ -26,8 +26,12 @@ interface IdentityData {
 let _memories: MemoryRecord[] | null = null;
 let _identity: IdentityData | null = null;
 let _identityFetchedAt: number | null = null;
+let _relevantMemories: MemoryRecord[] | null = null;
+let _relevantStaleAfter = 0; // timestamp after which relevant memories are stale
+let _toolCallsSinceRefresh = 0;
 
 const IDENTITY_STALE_MS = 24 * 60 * 60 * 1000; // 24h
+const RELEVANT_STALE_CALLS = 5; // refresh after 5 tool calls
 
 // ── Constitution (static, versioned with server) ──
 
@@ -102,6 +106,22 @@ export async function fetchRecall(api: ApiClient, config: ApiConfig): Promise<vo
       .catch(() => { _identity = null; }),
   );
 
+  // Relevant memories (proactive)
+  const relevantParams = new URLSearchParams({
+    q: 'important recent context',
+    user_id: config.userId,
+    limit: '10',
+  });
+  promises.push(
+    api.get<{ memories?: MemoryRecord[] }>(`/memory/search?${relevantParams}`, true)
+      .then(r => {
+        _relevantMemories = r.memories || [];
+        _relevantStaleAfter = Date.now() + 5 * 60 * 1000;
+        _toolCallsSinceRefresh = 0;
+      })
+      .catch(() => { _relevantMemories = []; }),
+  );
+
   await Promise.allSettled(promises);
 }
 
@@ -109,6 +129,29 @@ export function refreshIdentity(api: ApiClient): void {
   api.get<{ identity?: IdentityData }>('/memory/identity', true)
     .then(r => { _identity = r.identity || null; _identityFetchedAt = Date.now(); })
     .catch(() => {});
+}
+
+export function refreshRelevantMemories(api: ApiClient, config: ApiConfig): void {
+  const params = new URLSearchParams({
+    q: 'important recent context',
+    user_id: config.userId,
+    limit: '10',
+  });
+  api.get<{ memories?: MemoryRecord[] }>(`/memory/search?${params}`, true)
+    .then(r => {
+      _relevantMemories = r.memories || [];
+      _relevantStaleAfter = Date.now() + 5 * 60 * 1000; // 5 min
+      _toolCallsSinceRefresh = 0;
+    })
+    .catch(() => {});
+}
+
+export function markToolCall(): void {
+  _toolCallsSinceRefresh++;
+}
+
+export function isRelevantStale(): boolean {
+  return _toolCallsSinceRefresh >= RELEVANT_STALE_CALLS || Date.now() > _relevantStaleAfter;
 }
 
 // ── Resource List ──
@@ -147,6 +190,17 @@ export function getResourceList() {
     });
   }
 
+  // Relevant memories (proactive)
+  if (_relevantMemories?.length) {
+    const stale = isRelevantStale();
+    resources.push({
+      uri: 'velixar://memories/relevant',
+      name: 'Velixar — Relevant Memories',
+      description: `${_relevantMemories.length} contextually relevant memories${stale ? ' (stale — refresh recommended)' : ''}`,
+      mimeType: 'text/plain',
+    });
+  }
+
   return { resources };
 }
 
@@ -178,7 +232,6 @@ export function readResource(uri: string) {
     const text = (_memories || [])
       .map((m, i) => {
         const tags = m.tags?.length ? ` [${m.tags.join(', ')}]` : '';
-        // Compact: truncate to 200 chars, include ID for inspection
         const content = m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content;
         const id = m.id ? ` (${m.id})` : '';
         return `${i + 1}. ${content}${tags}${id}`;
@@ -187,11 +240,25 @@ export function readResource(uri: string) {
     return { contents: [{ uri, mimeType: 'text/plain', text: text || 'No memories found.' }] };
   }
 
+  if (uri === 'velixar://memories/relevant') {
+    const stale = isRelevantStale();
+    const lines: string[] = [];
+    if (stale) lines.push('⚠ Relevant memories may be stale — consider refreshing via velixar_context\n');
+    for (const [i, m] of (_relevantMemories || []).entries()) {
+      const tags = m.tags?.length ? ` [${m.tags.join(', ')}]` : '';
+      const content = m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content;
+      const id = m.id ? ` (${m.id})` : '';
+      lines.push(`${i + 1}. ${content}${tags}${id}`);
+    }
+    return { contents: [{ uri, mimeType: 'text/plain', text: lines.join('\n') || 'No relevant memories yet.' }] };
+  }
+
   throw new Error(`Unknown resource: ${uri}`);
 }
 
 export function getResourceUris(): string[] {
   const uris = ['velixar://system/constitution', 'velixar://identity/current'];
   if (_memories?.length) uris.push('velixar://memories/recent');
+  if (_relevantMemories?.length) uris.push('velixar://memories/relevant');
   return uris;
 }
