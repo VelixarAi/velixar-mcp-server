@@ -6,10 +6,21 @@
 |------|-------|-----------|---------|-------|
 | Kiro CLI | ✅ | ✅ | ✅ | Primary development host |
 | Claude Desktop | ✅ | ✅ | ✅ | Full MCP support |
-| Cursor | ✅ | ⚠️ | ❌ | Resources may not auto-inject |
-| Windsurf | ✅ | ⚠️ | ❌ | Resources may not auto-inject |
+| Cursor | ✅ | ⚠️ | ❌ | Tools work. Resources not auto-injected — use velixar_context instead. Prompts not supported. |
+| Windsurf | ✅ | ⚠️ | ❌ | Same as Cursor — tools-only mode works well. |
 | Continue.dev | ✅ | ✅ | ✅ | Full MCP support |
 | Custom hosts | ✅ | Varies | Varies | Depends on MCP SDK version |
+
+## JetBrains Plugin Feasibility
+
+JetBrains IDEs (IntelliJ, PyCharm, WebStorm, etc.) do not natively support MCP as of 2026-Q1.
+Options for JetBrains integration:
+
+1. **JetBrains AI Assistant plugin** — Does not support custom MCP servers yet. Monitor for MCP support.
+2. **Continue.dev JetBrains plugin** — Supports MCP servers. This is the recommended path.
+3. **Custom plugin** — Feasible but high effort. Would need to implement MCP client in Kotlin/Java.
+
+**Recommendation:** Use Continue.dev's JetBrains plugin for MCP support. Defer custom plugin until JetBrains adds native MCP support.
 
 ## Graceful Degradation
 

@@ -53,7 +53,7 @@ const server = new Server(
 fetchRecall(api, config); // non-blocking startup
 
 server.setRequestHandler(ListResourcesRequestSchema, async () => getResourceList());
-server.setRequestHandler(ReadResourceRequestSchema, async (req) => readResource(req.params.uri));
+server.setRequestHandler(ReadResourceRequestSchema, async (req) => readResource(req.params.uri, api));
 
 // ── Prompts ──
 

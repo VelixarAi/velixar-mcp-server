@@ -207,12 +207,20 @@ export function getResourceList() {
     });
   }
 
+  // Shadow graph (domain-scoped knowledge graph view)
+  resources.push({
+    uri: 'velixar://domains/{domain}/shadow_graph',
+    name: 'Velixar — Domain Shadow Graph',
+    description: 'Knowledge graph entities and relationships for a specific domain. Replace {domain} with the domain name.',
+    mimeType: 'application/json',
+  });
+
   return { resources };
 }
 
 // ── Read Resource ──
 
-export function readResource(uri: string) {
+export async function readResource(uri: string, api?: ApiClient) {
   if (uri === 'velixar://system/constitution') {
     return { contents: [{ uri, mimeType: 'text/plain', text: CONSTITUTION }] };
   }
@@ -259,11 +267,24 @@ export function readResource(uri: string) {
     return { contents: [{ uri, mimeType: 'text/plain', text: lines.join('\n') || 'No relevant memories yet.' }] };
   }
 
+  // Shadow graph — velixar://domains/{domain}/shadow_graph
+  const shadowMatch = uri.match(/^velixar:\/\/domains\/([^/]+)\/shadow_graph$/);
+  if (shadowMatch && api) {
+    const domain = decodeURIComponent(shadowMatch[1]);
+    try {
+      const result = await api.post<Record<string, unknown>>('/graph/search', { query: domain, limit: 50 });
+      const entities = (result as any).entities || (result as any).results || [];
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify({ domain, entities, count: entities.length }) }] };
+    } catch {
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify({ domain, entities: [], count: 0, error: 'Graph search unavailable' }) }] };
+    }
+  }
+
   throw new Error(`Unknown resource: ${uri}`);
 }
 
 export function getResourceUris(): string[] {
-  const uris = ['velixar://system/constitution', 'velixar://identity/current'];
+  const uris = ['velixar://system/constitution', 'velixar://identity/current', 'velixar://domains/{domain}/shadow_graph'];
   if (_memories?.length) uris.push('velixar://memories/recent');
   if (_relevantMemories?.length) uris.push('velixar://memories/relevant');
   return uris;

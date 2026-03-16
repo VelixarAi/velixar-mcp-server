@@ -376,6 +376,39 @@ Output: Brief form (just the relevant style preferences)`,
   }],
 };
 
+// ── Group 6: Enterprise & Sales ──
+
+const evaluate_enterprise_fit: WorkflowPrompt = {
+  name: 'evaluate_enterprise_fit',
+  description: 'Evaluate whether a domain/company is a good fit for Velixar enterprise. Synthesizes knowledge graph data about the domain.',
+  arguments: [
+    { name: 'domain', description: 'Company domain or name to evaluate', required: true },
+  ],
+  messages: [{
+    role: 'user',
+    content: `Evaluate enterprise fit for: {{domain}}
+
+Workflow:
+1. Call velixar_search for any existing memories about {{domain}}
+2. Call velixar_graph_traverse with entity="{{domain}}" to find related entities
+3. Call velixar_context with topic="{{domain}} enterprise evaluation"
+4. Call velixar_patterns with topic="enterprise adoption" for adoption patterns
+
+Evaluate:
+- Team size signals (mentions of teams, departments, org structure)
+- Technical maturity (CI/CD, MCP usage, LLM integration mentions)
+- Pain points that Velixar solves (context loss, knowledge silos, decision tracking)
+- Engagement signals (API usage frequency, memory volume, feature requests)
+
+Output form:
+- fit_score: 1-10
+- signals: list of positive/negative indicators
+- recommended_tier: free | pro | teams | enterprise
+- next_action: suggested outreach or nurture step
+- gaps: what information is missing to make a confident assessment`,
+  }],
+};
+
 // ── Export ──
 
 export const allPrompts: WorkflowPrompt[] = [
@@ -399,6 +432,8 @@ export const allPrompts: WorkflowPrompt[] = [
   summarize_user_identity,
   detect_preference_shift,
   align_response_style,
+  // Group 6: Enterprise & Sales
+  evaluate_enterprise_fit,
 ];
 
 export function getPromptList() {
