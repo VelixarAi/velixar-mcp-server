@@ -44,7 +44,7 @@ const systemToolNames = new Set(systemTools.map(t => t.name));
 // ── Server ──
 
 const server = new Server(
-  { name: 'velixar-mcp-server', version: '0.5.0' },
+  { name: 'velixar-mcp-server', version: '1.0.0' },
   { capabilities: { tools: {}, resources: {}, prompts: {} } },
 );
 
