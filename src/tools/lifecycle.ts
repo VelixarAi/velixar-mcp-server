@@ -96,7 +96,31 @@ export const lifecycleTools: Tool[] = [
       properties: {
         session_id: { type: 'string', description: 'Session ID to recall' },
         topic: { type: 'string', description: 'Topic to search for in session memories' },
+        chunk_id: { type: 'string', description: 'Specific chunk ID for drill-down into a time segment' },
         limit: { type: 'number', description: 'Max results (default 10)' },
+      },
+    },
+  },
+  {
+    name: 'velixar_session_resume',
+    description:
+      'Reconstruct full session context in a single call — the recommended way to resume work. ' +
+      'Handles chunking, selection, and assembly server-side. Returns a ready-to-use context package ' +
+      'with narrative summary, key decisions, open threads, and last state. ' +
+      'Use this instead of manually calling session_recall multiple times. ' +
+      'For drill-down into specific time segments, use session_recall with chunk_id after.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Session ID to resume (optional — uses most recent if omitted)' },
+        topic: { type: 'string', description: 'Topic to focus reconstruction on' },
+        intent: {
+          type: 'string',
+          enum: ['continue_coding', 'write_postmortem', 'catch_up'],
+          description: 'What you need the context for — affects which details are preserved (default: continue_coding)',
+        },
+        focus: { type: 'string', description: 'Specific entity or topic to prioritize in reconstruction' },
+        max_tokens: { type: 'number', description: 'Token budget for the response (default 4000)' },
       },
     },
   },
@@ -350,6 +374,159 @@ export async function handleLifecycleTool(
         memories: result.memories || [],
         count: (result.memories || []).length,
       }, config, { data_absent: !(result.memories?.length) })),
+    };
+  }
+
+  if (name === 'velixar_session_resume') {
+    const sessionId = args.session_id as string | undefined;
+    const topic = args.topic as string | undefined;
+    const intent = (args.intent as string) || 'continue_coding';
+    const focus = args.focus as string | undefined;
+    const maxTokens = Math.min((args.max_tokens as number) || 4000, 8000);
+
+    // Step 1: Find session memories — by ID, topic, or most recent
+    let memories: Array<Record<string, unknown>> = [];
+
+    if (sessionId) {
+      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(
+        `/memory/session/${sessionId}?limit=50`, true,
+      );
+      memories = result.memories || [];
+    } else {
+      // Search for session-tagged memories
+      const q = topic ? `session ${topic}` : 'session';
+      const params = new URLSearchParams({ q, user_id: config.userId, limit: '50' });
+      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
+      memories = result.memories || [];
+    }
+
+    if (!memories.length) {
+      return {
+        text: JSON.stringify(wrapResponse({
+          summary: 'No session memories found.',
+          chunks: [], decisions: [], open_threads: [], last_state: null,
+        }, config, { data_absent: true })),
+      };
+    }
+
+    // Step 2: Sort chronologically and chunk by time windows (~15 min)
+    const sorted = memories
+      .map(m => {
+        const ts = new Date(String(m.created_at || m.timestamp || '')).getTime() || 0;
+        return { content: String(m.content || ''), tags: Array.isArray(m.tags) ? m.tags as string[] : [], ts };
+      })
+      .filter(m => m.ts > 0)
+      .sort((a, b) => a.ts - b.ts);
+
+    const CHUNK_WINDOW_MS = 15 * 60 * 1000;
+    type SortedMem = typeof sorted[number];
+    const chunks: Array<{ id: string; time_range: string; summary: string; memories: SortedMem[]; char_count: number }> = [];
+    let chunkStart = sorted[0]?.ts || 0;
+    let currentChunk: SortedMem[] = [];
+
+    for (const m of sorted) {
+      if (m.ts - chunkStart > CHUNK_WINDOW_MS && currentChunk.length > 0) {
+        const startStr = new Date(chunkStart).toISOString();
+        const endStr = new Date(currentChunk[currentChunk.length - 1].ts).toISOString();
+        const content = currentChunk.map(c => c.content).join(' ');
+        chunks.push({
+          id: `chunk-${chunks.length}`,
+          time_range: `${startStr} → ${endStr}`,
+          summary: content.slice(0, 150),
+          memories: currentChunk,
+          char_count: content.length,
+        });
+        currentChunk = [];
+        chunkStart = m.ts;
+      }
+      currentChunk.push(m);
+    }
+    if (currentChunk.length) {
+      const startStr = new Date(chunkStart).toISOString();
+      const endStr = new Date(currentChunk[currentChunk.length - 1].ts).toISOString();
+      const content = currentChunk.map(c => c.content).join(' ');
+      chunks.push({
+        id: `chunk-${chunks.length}`,
+        time_range: `${startStr} → ${endStr}`,
+        summary: content.slice(0, 150),
+        memories: currentChunk,
+        char_count: content.length,
+      });
+    }
+
+    // Step 3: Select chunks based on intent and budget
+    // Estimate ~4 chars per token
+    const charBudget = maxTokens * 4;
+    let selectedContent: string[] = [];
+    let usedChars = 0;
+
+    // Intent-based selection: recent chunks get full detail, older get summaries
+    const recentChunks = chunks.slice(-3); // last 3 chunks = full detail
+    const olderChunks = chunks.slice(0, -3); // older = summary only
+
+    for (const chunk of recentChunks) {
+      const detail = chunk.memories.map(m => m.content).join('\n');
+      if (usedChars + detail.length <= charBudget) {
+        selectedContent.push(`[${chunk.time_range}]\n${detail}`);
+        usedChars += detail.length;
+      }
+    }
+    for (const chunk of olderChunks.reverse()) {
+      if (usedChars + chunk.summary.length + 50 <= charBudget) {
+        selectedContent.unshift(`[${chunk.time_range}] (summary) ${chunk.summary}`);
+        usedChars += chunk.summary.length + 50;
+      }
+    }
+
+    // Step 4: Extract decisions and open threads based on intent
+    const allContent = sorted.map(m => m.content).join('\n');
+    const decisions = sorted
+      .filter(m => {
+        const c = m.content.toLowerCase();
+        return c.includes('decided') || c.includes('decision') || c.includes('chose') || c.includes('going with');
+      })
+      .map(m => m.content.slice(0, 200));
+
+    const openThreads = sorted
+      .filter(m => {
+        const c = m.content.toLowerCase();
+        return c.includes('todo') || c.includes('need to') || c.includes('should') || c.includes('next step') || c.includes('blocked');
+      })
+      .map(m => m.content.slice(0, 200));
+
+    // Step 5: Build context package
+    const lastMemory = sorted[sorted.length - 1];
+    const lastState = lastMemory ? lastMemory.content.slice(0, 300) : null;
+
+    // Focus filtering
+    if (focus) {
+      selectedContent = selectedContent.filter(c => c.toLowerCase().includes(focus.toLowerCase()));
+    }
+
+    const manifest = chunks.map(c => ({
+      id: c.id,
+      time_range: c.time_range,
+      summary: c.summary,
+      memory_count: c.memories.length,
+    }));
+
+    return {
+      text: JSON.stringify(wrapResponse({
+        intent,
+        session_id: sessionId || 'auto-detected',
+        chunk_manifest: manifest,
+        total_chunks: chunks.length,
+        total_memories: sorted.length,
+        narrative: selectedContent.join('\n\n'),
+        decisions: decisions.slice(0, 10),
+        open_threads: openThreads.slice(0, 10),
+        last_state: lastState,
+        focus: focus || null,
+        token_estimate: Math.ceil(usedChars / 4),
+        drill_down_hint: 'Use velixar_session_recall with chunk_id to expand any chunk in the manifest.',
+      }, config, {
+        data_absent: selectedContent.length === 0,
+      })),
     };
   }
 
