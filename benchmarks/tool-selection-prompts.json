@@ -1,104 +1,434 @@
 [
-  {"prompt": "What's the current state of this project?", "expected": "velixar_context"},
-  {"prompt": "Give me an overview of what I'm working on", "expected": "velixar_context"},
-  {"prompt": "I'm starting a new task, what should I know?", "expected": "velixar_context"},
-  {"prompt": "What's relevant to my current work?", "expected": "velixar_context"},
-  {"prompt": "Orient me on this workspace", "expected": "velixar_context"},
-  {"prompt": "What have I been working on recently?", "expected": "velixar_context"},
-  {"prompt": "Summarize the workspace state", "expected": "velixar_context"},
-  {"prompt": "What's the big picture here?", "expected": "velixar_context"},
-  {"prompt": "Help me get up to speed", "expected": "velixar_context"},
-  {"prompt": "What should I focus on?", "expected": "velixar_context"},
-  {"prompt": "Find memories about database migrations", "expected": "velixar_search"},
-  {"prompt": "Search for anything about authentication", "expected": "velixar_search"},
-  {"prompt": "Do I have notes about Redis caching?", "expected": "velixar_search"},
-  {"prompt": "Look up what I stored about API design", "expected": "velixar_search"},
-  {"prompt": "Find my notes on TypeScript patterns", "expected": "velixar_search"},
-  {"prompt": "What did I write about error handling?", "expected": "velixar_search"},
-  {"prompt": "Search for deployment procedures", "expected": "velixar_search"},
-  {"prompt": "Any memories about testing strategies?", "expected": "velixar_search"},
-  {"prompt": "Find what I know about GraphQL", "expected": "velixar_search"},
-  {"prompt": "Look up my notes on Docker", "expected": "velixar_search"},
-  {"prompt": "What connects to the Qdrant service?", "expected": "velixar_graph_traverse"},
-  {"prompt": "Show me the relationships around DynamoDB", "expected": "velixar_graph_traverse"},
-  {"prompt": "What depends on the Lambda function?", "expected": "velixar_graph_traverse"},
-  {"prompt": "Map the connections from Redis", "expected": "velixar_graph_traverse"},
-  {"prompt": "What entities are related to Supabase?", "expected": "velixar_graph_traverse"},
-  {"prompt": "Show me what's connected to the API gateway", "expected": "velixar_graph_traverse"},
-  {"prompt": "Trace the dependency graph from the auth module", "expected": "velixar_graph_traverse"},
-  {"prompt": "What are the relationships around the MCP server?", "expected": "velixar_graph_traverse"},
-  {"prompt": "Who am I? What are my preferences?", "expected": "velixar_identity"},
-  {"prompt": "What's my communication style?", "expected": "velixar_identity"},
-  {"prompt": "What expertise do I have?", "expected": "velixar_identity"},
-  {"prompt": "What are my recurring goals?", "expected": "velixar_identity"},
-  {"prompt": "Show me my user profile", "expected": "velixar_identity"},
-  {"prompt": "What constraints do I work under?", "expected": "velixar_identity"},
-  {"prompt": "What do I prefer for code style?", "expected": "velixar_identity"},
-  {"prompt": "Are there any contradictions in my stored knowledge?", "expected": "velixar_contradictions"},
-  {"prompt": "Something seems inconsistent, check for conflicts", "expected": "velixar_contradictions"},
-  {"prompt": "Do any of my beliefs contradict each other?", "expected": "velixar_contradictions"},
-  {"prompt": "Surface any conflicting information", "expected": "velixar_contradictions"},
-  {"prompt": "Are there unresolved conflicts in the workspace?", "expected": "velixar_contradictions"},
-  {"prompt": "Check for contradictory preferences", "expected": "velixar_contradictions"},
-  {"prompt": "How did my understanding of microservices evolve?", "expected": "velixar_timeline"},
-  {"prompt": "Trace the history of this architecture decision", "expected": "velixar_timeline"},
-  {"prompt": "When did I change my mind about testing?", "expected": "velixar_timeline"},
-  {"prompt": "Show me the evolution of the deployment process", "expected": "velixar_timeline"},
-  {"prompt": "What's the chronological history of this feature?", "expected": "velixar_timeline"},
-  {"prompt": "How has my approach to error handling changed?", "expected": "velixar_timeline"},
-  {"prompt": "Timeline of the database migration project", "expected": "velixar_timeline"},
-  {"prompt": "Have I seen this problem pattern before?", "expected": "velixar_patterns"},
-  {"prompt": "What recurring patterns exist in my debugging?", "expected": "velixar_patterns"},
-  {"prompt": "Are there common motifs in my architecture decisions?", "expected": "velixar_patterns"},
-  {"prompt": "What patterns emerge from my past solutions?", "expected": "velixar_patterns"},
-  {"prompt": "Do I have a pattern for handling this type of bug?", "expected": "velixar_patterns"},
-  {"prompt": "Show me the details of memory abc-123", "expected": "velixar_inspect"},
-  {"prompt": "Inspect that specific memory in detail", "expected": "velixar_inspect"},
-  {"prompt": "What's the full content and provenance of this recall?", "expected": "velixar_inspect"},
-  {"prompt": "Debug why this memory was recalled", "expected": "velixar_inspect"},
-  {"prompt": "Show me the raw data for that memory", "expected": "velixar_inspect"},
-  {"prompt": "Remember that I prefer functional programming", "expected": "velixar_store"},
-  {"prompt": "Store this: the API uses JWT authentication", "expected": "velixar_store"},
-  {"prompt": "Save this decision: we're using PostgreSQL", "expected": "velixar_store"},
-  {"prompt": "Note that the deploy process requires approval", "expected": "velixar_store"},
-  {"prompt": "Remember: always use strict TypeScript", "expected": "velixar_store"},
-  {"prompt": "Store this bug fix for future reference", "expected": "velixar_store"},
-  {"prompt": "Save this preference: tabs over spaces", "expected": "velixar_store"},
-  {"prompt": "Record that we chose AWS over GCP", "expected": "velixar_store"},
-  {"prompt": "Show me my recent memories", "expected": "velixar_list"},
-  {"prompt": "List the last 10 things I stored", "expected": "velixar_list"},
-  {"prompt": "What's in my memory store?", "expected": "velixar_list"},
-  {"prompt": "Update memory xyz to fix the typo", "expected": "velixar_update"},
-  {"prompt": "Change the tags on that memory", "expected": "velixar_update"},
-  {"prompt": "Modify the content of that stored note", "expected": "velixar_update"},
-  {"prompt": "Delete that outdated memory", "expected": "velixar_delete"},
-  {"prompt": "Remove the memory about the old API", "expected": "velixar_delete"},
-  {"prompt": "This session had important takeaways, distill them", "expected": "velixar_distill"},
-  {"prompt": "Extract the key learnings from this conversation", "expected": "velixar_distill"},
-  {"prompt": "Save the important parts of this session as durable memories", "expected": "velixar_distill"},
-  {"prompt": "Distill what we discussed into lasting knowledge", "expected": "velixar_distill"},
-  {"prompt": "Save this session for later", "expected": "velixar_session_save"},
-  {"prompt": "Bookmark where we left off", "expected": "velixar_session_save"},
-  {"prompt": "What were we doing last session?", "expected": "velixar_session_recall"},
-  {"prompt": "Resume from where I left off yesterday", "expected": "velixar_session_recall"},
-  {"prompt": "Store these 5 facts at once", "expected": "velixar_batch_store"},
-  {"prompt": "Bulk import these notes", "expected": "velixar_batch_store"},
-  {"prompt": "Search for both authentication and authorization", "expected": "velixar_batch_search"},
-  {"prompt": "Find memories about Redis AND about caching strategies", "expected": "velixar_batch_search"},
-  {"prompt": "Merge my scattered notes about deployment into one", "expected": "velixar_consolidate"},
-  {"prompt": "Combine these related memories into a unified summary", "expected": "velixar_consolidate"},
-  {"prompt": "Fix the tags on these memories", "expected": "velixar_retag"},
-  {"prompt": "Add the 'architecture' tag to those memories", "expected": "velixar_retag"},
-  {"prompt": "Is the backend healthy?", "expected": "velixar_health"},
-  {"prompt": "Check if Velixar is connected", "expected": "velixar_health"},
-  {"prompt": "Show me debug info about the MCP server", "expected": "velixar_debug"},
-  {"prompt": "What's the cache and retry state?", "expected": "velixar_debug"},
-  {"prompt": "What tools and features are available?", "expected": "velixar_capabilities"},
-  {"prompt": "List all Velixar capabilities", "expected": "velixar_capabilities"},
-  {"prompt": "What's the current security scanning mode?", "expected": "velixar_security"},
-  {"prompt": "Set security to strict mode", "expected": "velixar_security"},
-  {"prompt": "How many memories do I have?", "expected": "velixar_context"},
-  {"prompt": "What entities exist in my knowledge graph?", "expected": "velixar_context"},
-  {"prompt": "I need to understand the full picture before diving in", "expected": "velixar_context"},
-  {"prompt": "What's the relationship between the auth service and the API?", "expected": "velixar_graph_traverse"}
+  {
+    "prompt": "What's the current state of this project?",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "Give me an overview of what I'm working on",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "I'm starting a new task, what should I know?",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "What's relevant to my current work?",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "Orient me on this workspace",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "What have I been working on recently?",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "Summarize the workspace state",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "What's the big picture here?",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "Help me get up to speed",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "What should I focus on?",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "Find memories about database migrations",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "Search for anything about authentication",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "Do I have notes about Redis caching?",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "Look up what I stored about API design",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "Find my notes on TypeScript patterns",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "What did I write about error handling?",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "Search for deployment procedures",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "Any memories about testing strategies?",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "Find what I know about GraphQL",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "Look up my notes on Docker",
+    "expected": "velixar_search"
+  },
+  {
+    "prompt": "What connects to the Qdrant service?",
+    "expected": "velixar_graph_traverse"
+  },
+  {
+    "prompt": "Show me the relationships around DynamoDB",
+    "expected": "velixar_graph_traverse"
+  },
+  {
+    "prompt": "What depends on the Lambda function?",
+    "expected": "velixar_graph_traverse"
+  },
+  {
+    "prompt": "Map the connections from Redis",
+    "expected": "velixar_graph_traverse"
+  },
+  {
+    "prompt": "What entities are related to Supabase?",
+    "expected": "velixar_graph_traverse"
+  },
+  {
+    "prompt": "Show me what's connected to the API gateway",
+    "expected": "velixar_graph_traverse"
+  },
+  {
+    "prompt": "Trace the dependency graph from the auth module",
+    "expected": "velixar_graph_traverse"
+  },
+  {
+    "prompt": "What are the relationships around the MCP server?",
+    "expected": "velixar_graph_traverse"
+  },
+  {
+    "prompt": "Who am I? What are my preferences?",
+    "expected": "velixar_identity"
+  },
+  {
+    "prompt": "What's my communication style?",
+    "expected": "velixar_identity"
+  },
+  {
+    "prompt": "What expertise do I have?",
+    "expected": "velixar_identity"
+  },
+  {
+    "prompt": "What are my recurring goals?",
+    "expected": "velixar_identity"
+  },
+  {
+    "prompt": "Show me my user profile",
+    "expected": "velixar_identity"
+  },
+  {
+    "prompt": "What constraints do I work under?",
+    "expected": "velixar_identity"
+  },
+  {
+    "prompt": "What do I prefer for code style?",
+    "expected": "velixar_identity"
+  },
+  {
+    "prompt": "Are there any contradictions in my stored knowledge?",
+    "expected": "velixar_contradictions"
+  },
+  {
+    "prompt": "Something seems inconsistent, check for conflicts",
+    "expected": "velixar_contradictions"
+  },
+  {
+    "prompt": "Do any of my beliefs contradict each other?",
+    "expected": "velixar_contradictions"
+  },
+  {
+    "prompt": "Surface any conflicting information",
+    "expected": "velixar_contradictions"
+  },
+  {
+    "prompt": "Are there unresolved conflicts in the workspace?",
+    "expected": "velixar_contradictions"
+  },
+  {
+    "prompt": "Check for contradictory preferences",
+    "expected": "velixar_contradictions"
+  },
+  {
+    "prompt": "How did my understanding of microservices evolve?",
+    "expected": "velixar_timeline"
+  },
+  {
+    "prompt": "Trace the history of this architecture decision",
+    "expected": "velixar_timeline"
+  },
+  {
+    "prompt": "When did I change my mind about testing?",
+    "expected": "velixar_timeline"
+  },
+  {
+    "prompt": "Show me the evolution of the deployment process",
+    "expected": "velixar_timeline"
+  },
+  {
+    "prompt": "What's the chronological history of this feature?",
+    "expected": "velixar_timeline"
+  },
+  {
+    "prompt": "How has my approach to error handling changed?",
+    "expected": "velixar_timeline"
+  },
+  {
+    "prompt": "Timeline of the database migration project",
+    "expected": "velixar_timeline"
+  },
+  {
+    "prompt": "Have I seen this problem pattern before?",
+    "expected": "velixar_patterns"
+  },
+  {
+    "prompt": "What recurring patterns exist in my debugging?",
+    "expected": "velixar_patterns"
+  },
+  {
+    "prompt": "Are there common motifs in my architecture decisions?",
+    "expected": "velixar_patterns"
+  },
+  {
+    "prompt": "What patterns emerge from my past solutions?",
+    "expected": "velixar_patterns"
+  },
+  {
+    "prompt": "Do I have a pattern for handling this type of bug?",
+    "expected": "velixar_patterns"
+  },
+  {
+    "prompt": "Show me the details of memory abc-123",
+    "expected": "velixar_inspect"
+  },
+  {
+    "prompt": "Inspect that specific memory in detail",
+    "expected": "velixar_inspect"
+  },
+  {
+    "prompt": "What's the full content and provenance of this recall?",
+    "expected": "velixar_inspect"
+  },
+  {
+    "prompt": "Debug why this memory was recalled",
+    "expected": "velixar_inspect"
+  },
+  {
+    "prompt": "Show me the raw data for that memory",
+    "expected": "velixar_inspect"
+  },
+  {
+    "prompt": "Remember that I prefer functional programming",
+    "expected": "velixar_store"
+  },
+  {
+    "prompt": "Store this: the API uses JWT authentication",
+    "expected": "velixar_store"
+  },
+  {
+    "prompt": "Save this decision: we're using PostgreSQL",
+    "expected": "velixar_store"
+  },
+  {
+    "prompt": "Note that the deploy process requires approval",
+    "expected": "velixar_store"
+  },
+  {
+    "prompt": "Remember: always use strict TypeScript",
+    "expected": "velixar_store"
+  },
+  {
+    "prompt": "Store this bug fix for future reference",
+    "expected": "velixar_store"
+  },
+  {
+    "prompt": "Save this preference: tabs over spaces",
+    "expected": "velixar_store"
+  },
+  {
+    "prompt": "Record that we chose AWS over GCP",
+    "expected": "velixar_store"
+  },
+  {
+    "prompt": "Show me my recent memories",
+    "expected": "velixar_list"
+  },
+  {
+    "prompt": "List the last 10 things I stored",
+    "expected": "velixar_list"
+  },
+  {
+    "prompt": "What's in my memory store?",
+    "expected": "velixar_list"
+  },
+  {
+    "prompt": "Update memory xyz to fix the typo",
+    "expected": "velixar_update"
+  },
+  {
+    "prompt": "Change the tags on that memory",
+    "expected": "velixar_update"
+  },
+  {
+    "prompt": "Modify the content of that stored note",
+    "expected": "velixar_update"
+  },
+  {
+    "prompt": "Delete that outdated memory",
+    "expected": "velixar_delete"
+  },
+  {
+    "prompt": "Remove the memory about the old API",
+    "expected": "velixar_delete"
+  },
+  {
+    "prompt": "This session had important takeaways, distill them",
+    "expected": "velixar_distill"
+  },
+  {
+    "prompt": "Extract the key learnings from this conversation",
+    "expected": "velixar_distill"
+  },
+  {
+    "prompt": "Save the important parts of this session as durable memories",
+    "expected": "velixar_distill"
+  },
+  {
+    "prompt": "Distill what we discussed into lasting knowledge",
+    "expected": "velixar_distill"
+  },
+  {
+    "prompt": "Save this session for later",
+    "expected": "velixar_session_save"
+  },
+  {
+    "prompt": "Bookmark where we left off",
+    "expected": "velixar_session_save"
+  },
+  {
+    "prompt": "What were we doing last session?",
+    "expected": "velixar_session_recall"
+  },
+  {
+    "prompt": "Resume from where I left off yesterday",
+    "expected": "velixar_session_recall"
+  },
+  {
+    "prompt": "Store these 5 facts at once",
+    "expected": "velixar_batch_store"
+  },
+  {
+    "prompt": "Bulk import these notes",
+    "expected": "velixar_batch_store"
+  },
+  {
+    "prompt": "Search for both authentication and authorization",
+    "expected": "velixar_batch_search"
+  },
+  {
+    "prompt": "Find memories about Redis AND about caching strategies",
+    "expected": "velixar_batch_search"
+  },
+  {
+    "prompt": "Merge my scattered notes about deployment into one",
+    "expected": "velixar_consolidate"
+  },
+  {
+    "prompt": "Combine these related memories into a unified summary",
+    "expected": "velixar_consolidate"
+  },
+  {
+    "prompt": "Fix the tags on these memories",
+    "expected": "velixar_retag"
+  },
+  {
+    "prompt": "Add the 'architecture' tag to those memories",
+    "expected": "velixar_retag"
+  },
+  {
+    "prompt": "Is the backend healthy?",
+    "expected": "velixar_health"
+  },
+  {
+    "prompt": "Check if Velixar is connected",
+    "expected": "velixar_health"
+  },
+  {
+    "prompt": "Show me debug info about the MCP server",
+    "expected": "velixar_debug"
+  },
+  {
+    "prompt": "What's the cache and retry state?",
+    "expected": "velixar_debug"
+  },
+  {
+    "prompt": "What tools and features are available?",
+    "expected": "velixar_capabilities"
+  },
+  {
+    "prompt": "List all Velixar capabilities",
+    "expected": "velixar_capabilities"
+  },
+  {
+    "prompt": "What's the current security scanning mode?",
+    "expected": "velixar_security"
+  },
+  {
+    "prompt": "Set security to strict mode",
+    "expected": "velixar_security"
+  },
+  {
+    "prompt": "How many memories do I have?",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "What entities exist in my knowledge graph?",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "I need to understand the full picture before diving in",
+    "expected": "velixar_context"
+  },
+  {
+    "prompt": "What's the relationship between the auth service and the API?",
+    "expected": "velixar_graph_traverse"
+  },
+  {
+    "prompt": "Export all my memories as a JSON backup",
+    "expected_tool": "velixar_export"
+  },
+  {
+    "prompt": "Export memories about architecture decisions as markdown",
+    "expected_tool": "velixar_export"
+  },
+  {
+    "prompt": "Export my knowledge graph along with memories",
+    "expected_tool": "velixar_export"
+  },
+  {
+    "prompt": "Import these notes from my Obsidian vault",
+    "expected_tool": "velixar_import"
+  },
+  {
+    "prompt": "Bulk import a JSON array of memories from another system",
+    "expected_tool": "velixar_import"
+  },
+  {
+    "prompt": "Import this markdown document as memories with source tracking",
+    "expected_tool": "velixar_import"
+  }
 ]

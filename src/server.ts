@@ -14,7 +14,7 @@ import {
   GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { loadConfig, ApiClient } from './api.js';
+import { loadConfig, ApiClient, log } from './api.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
 import { systemTools, handleSystemTool } from './tools/system.js';
 import { recallTools, handleRecallTool } from './tools/recall.js';
@@ -66,6 +66,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: allTools 
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
+  const start = Date.now();
 
   try {
     let result: { text: string; isError?: boolean };
@@ -86,6 +87,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       result = await entry.handler(name, args as Record<string, unknown>, api, config);
     }
 
+    log('info', 'tool_call', { tool: name, duration_ms: Date.now() - start, error: false });
+
     // Track tool calls for resource staleness; refresh after mutations
     markToolCall();
     const mutationTools = new Set(['velixar_store', 'velixar_update', 'velixar_delete', 'velixar_distill']);
@@ -99,6 +102,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
+    log('error', 'tool_error', { tool: name, duration_ms: Date.now() - start, error: msg });
     return {
       content: [{ type: 'text' as const, text: `Error: ${msg}` }],
       isError: true,

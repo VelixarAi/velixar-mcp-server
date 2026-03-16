@@ -154,14 +154,38 @@ export const lifecycleTools: Tool[] = [
     name: 'velixar_export',
     description:
       'Export memories as structured data. Supports JSON and Markdown formats. ' +
-      'Includes tags, timestamps, and provenance. Use for backup or sharing.',
+      'Includes tags, timestamps, provenance, and optionally graph relationships. Use for backup or sharing.',
     inputSchema: {
       type: 'object',
       properties: {
         format: { type: 'string', enum: ['json', 'markdown'], description: 'Export format (default: json)' },
         query: { type: 'string', description: 'Optional: filter by search query' },
         limit: { type: 'number', description: 'Max memories to export (default 50)' },
+        include_graph: { type: 'boolean', description: 'Include graph entities and relationships (default: false)' },
       },
+    },
+  },
+  {
+    name: 'velixar_import',
+    description:
+      'Bulk import memories from structured data. Accepts JSON or Markdown format. ' +
+      'Preserves tags, timestamps, and provenance when provided. Max 50 items per call. ' +
+      'Use for restoring backups, migrating from other systems, or importing notes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        format: { type: 'string', enum: ['json', 'markdown'], description: 'Input format (default: json)' },
+        data: {
+          description: 'For JSON: array of {content, tags?, tier?}. For Markdown: string with --- separators between entries.',
+          oneOf: [
+            { type: 'array', items: { type: 'object', properties: { content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, tier: { type: 'number' } }, required: ['content'] } },
+            { type: 'string' },
+          ],
+        },
+        default_tags: { type: 'array', items: { type: 'string' }, description: 'Tags to apply to all imported items' },
+        source: { type: 'string', description: 'Provenance label (e.g. "notion-export", "obsidian-vault")' },
+      },
+      required: ['data'],
     },
   },
 ];
@@ -459,6 +483,7 @@ export async function handleLifecycleTool(
     const format = (args.format as string) || 'json';
     const limit = Math.min((args.limit as number) || 50, 200);
     const query = args.query as string | undefined;
+    const includeGraph = args.include_graph as boolean;
 
     let memories: Array<Record<string, unknown>> = [];
     if (query) {
@@ -471,13 +496,20 @@ export async function handleLifecycleTool(
       memories = result.memories || [];
     }
 
+    let graph: Record<string, unknown> | undefined;
+    if (includeGraph) {
+      try {
+        graph = await api.get<Record<string, unknown>>('/exocortex/overview', true);
+      } catch { /* graph optional */ }
+    }
+
     if (format === 'markdown') {
       const md = memories.map((m: any) => {
         const tags = m.tags?.length ? `Tags: ${m.tags.join(', ')}` : '';
         const date = m.created_at || '';
         return `## ${m.id}\n${date ? `*${date}*\n` : ''}\n${m.content}\n\n${tags}`;
       }).join('\n\n---\n\n');
-      return { text: JSON.stringify(wrapResponse({ format: 'markdown', count: memories.length, content: md }, config)) };
+      return { text: JSON.stringify(wrapResponse({ format: 'markdown', count: memories.length, content: md, ...(graph ? { graph } : {}) }, config)) };
     }
 
     return {
@@ -488,6 +520,59 @@ export async function handleLifecycleTool(
           id: m.id, content: m.content, tags: m.tags || [],
           created_at: m.created_at, tier: m.tier,
         })),
+        ...(graph ? { graph } : {}),
+      }, config)),
+    };
+  }
+
+  if (name === 'velixar_import') {
+    const format = (args.format as string) || 'json';
+    const defaultTags = (args.default_tags as string[]) || [];
+    const source = args.source as string | undefined;
+
+    let items: Array<{ content: string; tags?: string[]; tier?: number }> = [];
+
+    if (format === 'markdown' && typeof args.data === 'string') {
+      items = (args.data as string).split(/\n---\n/).map(block => {
+        const lines = block.trim().split('\n');
+        const tagLine = lines.find(l => /^Tags:\s/i.test(l));
+        const tags = tagLine ? tagLine.replace(/^Tags:\s*/i, '').split(',').map(t => t.trim()).filter(Boolean) : [];
+        const content = lines.filter(l => l !== tagLine && !/^##\s/.test(l) && !/^\*.*\*$/.test(l)).join('\n').trim();
+        return { content, tags };
+      }).filter(i => i.content.length > 0);
+    } else if (Array.isArray(args.data)) {
+      items = args.data as typeof items;
+    } else {
+      return { text: JSON.stringify(wrapResponse({ error: 'data must be an array (JSON) or string (Markdown)' }, config)), isError: true };
+    }
+
+    if (items.length > 50) items = items.slice(0, 50);
+
+    const results = await Promise.allSettled(
+      items.map(item =>
+        api.post<{ id?: string; error?: string }>('/memory/store', {
+          content: item.content,
+          tags: [...(item.tags || []), ...defaultTags, ...(source ? [`source:${source}`] : [])],
+          tier: item.tier ?? 2,
+          user_id: config.userId,
+        }),
+      ),
+    );
+
+    const statuses = results.map((r, i) => ({
+      index: i,
+      status: r.status === 'fulfilled' ? 'ok' : 'error',
+      id: r.status === 'fulfilled' ? (r.value as any).id : undefined,
+      error: r.status === 'rejected' ? String(r.reason) : undefined,
+    }));
+
+    return {
+      text: JSON.stringify(wrapResponse({
+        imported: statuses.filter(s => s.status === 'ok').length,
+        failed: statuses.filter(s => s.status === 'error').length,
+        total: items.length,
+        items: statuses,
+        ...(source ? { source } : {}),
       }, config)),
     };
   }

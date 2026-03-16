@@ -1,0 +1,238 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Velixar Cognition API",
+    "version": "1.0.0",
+    "description": "Cognitive memory and knowledge graph API for LLMs. Powers the Velixar MCP Server."
+  },
+  "servers": [
+    { "url": "https://api.velixar.ai/v1", "description": "Production" }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "operationId": "getHealth",
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } } } } } } }
+      }
+    },
+    "/memory": {
+      "post": {
+        "summary": "Store a memory",
+        "operationId": "storeMemory",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StoreMemoryRequest" } } } },
+        "responses": { "200": { "description": "Stored", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryResponse" } } } } }
+      }
+    },
+    "/memory/search": {
+      "get": {
+        "summary": "Search memories by semantic similarity",
+        "operationId": "searchMemories",
+        "parameters": [
+          { "name": "q", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "user_id", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 5 } }
+        ],
+        "responses": { "200": { "description": "Results", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SearchResponse" } } } } }
+      }
+    },
+    "/memory/list": {
+      "get": {
+        "summary": "List memories with pagination",
+        "operationId": "listMemories",
+        "parameters": [
+          { "name": "user_id", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Results", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } } }
+      }
+    },
+    "/memory/identity": {
+      "get": {
+        "summary": "Get identity profile for workspace",
+        "operationId": "getIdentity",
+        "parameters": [
+          { "name": "user_id", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Identity", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IdentityResponse" } } } } }
+      }
+    },
+    "/graph/entities": {
+      "get": {
+        "summary": "List knowledge graph entities",
+        "operationId": "listEntities",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } }
+        ],
+        "responses": { "200": { "description": "Entities", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EntitiesResponse" } } } } }
+      }
+    },
+    "/graph/traverse": {
+      "post": {
+        "summary": "Traverse entity relationships",
+        "operationId": "traverseGraph",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TraverseRequest" } } } },
+        "responses": { "200": { "description": "Graph", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TraverseResponse" } } } } }
+      }
+    },
+    "/graph/search": {
+      "post": {
+        "summary": "Search entities by name or type",
+        "operationId": "searchGraph",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GraphSearchRequest" } } } },
+        "responses": { "200": { "description": "Results", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EntitiesResponse" } } } } }
+      }
+    },
+    "/exocortex/overview": {
+      "get": {
+        "summary": "Knowledge graph overview with stats",
+        "operationId": "getOverview",
+        "responses": { "200": { "description": "Overview", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OverviewResponse" } } } } }
+      }
+    },
+    "/exocortex/contradictions": {
+      "get": {
+        "summary": "Detect contradictions in stored memories",
+        "operationId": "getContradictions",
+        "responses": { "200": { "description": "Contradictions", "content": { "application/json": { "schema": { "type": "object", "properties": { "contradictions": { "type": "array", "items": { "$ref": "#/components/schemas/Contradiction" } } } } } } } }
+      }
+    },
+    "/exocortex/sessions": {
+      "get": {
+        "summary": "List stored sessions",
+        "operationId": "getSessions",
+        "responses": { "200": { "description": "Sessions" } }
+      }
+    },
+    "/settings/security": {
+      "get": {
+        "summary": "Get security scanning settings",
+        "operationId": "getSecuritySettings",
+        "responses": { "200": { "description": "Settings" } }
+      },
+      "patch": {
+        "summary": "Update security scanning settings",
+        "operationId": "updateSecuritySettings",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "scanning_mode": { "type": "string", "enum": ["strict", "standard", "permissive"] } } } } } },
+        "responses": { "200": { "description": "Updated" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "Velixar API key (vlx_...)" }
+    },
+    "schemas": {
+      "StoreMemoryRequest": {
+        "type": "object",
+        "required": ["content", "user_id"],
+        "properties": {
+          "content": { "type": "string" },
+          "user_id": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "tier": { "type": "integer", "enum": [0, 1, 2, 3], "description": "0=pinned, 1=session, 2=semantic, 3=org" }
+        }
+      },
+      "MemoryResponse": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "content": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "created_at": { "type": "string", "format": "date-time" },
+          "tier": { "type": "integer" }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "properties": {
+          "memories": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryResponse" } }
+        }
+      },
+      "ListResponse": {
+        "type": "object",
+        "properties": {
+          "memories": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryResponse" } },
+          "cursor": { "type": "string" }
+        }
+      },
+      "IdentityResponse": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "role": { "type": "string" },
+          "preferences": { "type": "object" },
+          "workspace_scope": { "type": "string" }
+        }
+      },
+      "EntitiesResponse": {
+        "type": "object",
+        "properties": {
+          "entities": { "type": "array", "items": { "$ref": "#/components/schemas/GraphEntity" } }
+        }
+      },
+      "GraphEntity": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "entity_type": { "type": "string" },
+          "label": { "type": "string" },
+          "properties": { "type": "object" },
+          "relevance": { "type": "number" },
+          "confidence": { "type": "number" }
+        }
+      },
+      "TraverseRequest": {
+        "type": "object",
+        "required": ["entity"],
+        "properties": {
+          "entity": { "type": "string" },
+          "max_hops": { "type": "integer", "default": 2, "maximum": 10 }
+        }
+      },
+      "TraverseResponse": {
+        "type": "object",
+        "properties": {
+          "nodes": { "type": "array", "items": { "$ref": "#/components/schemas/GraphEntity" } },
+          "edges": { "type": "array", "items": { "$ref": "#/components/schemas/GraphRelation" } }
+        }
+      },
+      "GraphRelation": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "string" },
+          "target": { "type": "string" },
+          "relation_type": { "type": "string" },
+          "weight": { "type": "number" }
+        }
+      },
+      "GraphSearchRequest": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "entity_type": { "type": "string" },
+          "limit": { "type": "integer", "default": 20 }
+        }
+      },
+      "OverviewResponse": {
+        "type": "object",
+        "properties": {
+          "cortex_nodes": { "type": "integer" },
+          "total_memories": { "type": "integer" },
+          "entity_types": { "type": "object" }
+        }
+      },
+      "Contradiction": {
+        "type": "object",
+        "properties": {
+          "memory_a": { "type": "string" },
+          "memory_b": { "type": "string" },
+          "description": { "type": "string" },
+          "severity": { "type": "string", "enum": ["low", "medium", "high"] }
+        }
+      }
+    }
+  }
+}

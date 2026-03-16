@@ -60,6 +60,21 @@ export function loadConfig(): ApiConfig {
   };
 }
 
+// ── Structured Logging ──
+
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+const LOG_JSON = process.env.VELIXAR_LOG_FORMAT === 'json';
+
+export function log(level: LogLevel, msg: string, fields?: Record<string, unknown>): void {
+  if (LOG_JSON) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level, msg, service: 'velixar-mcp', ...fields }));
+  } else {
+    const extra = fields ? ` ${JSON.stringify(fields)}` : '';
+    console.error(`[velixar] ${level}: ${msg}${extra}`);
+  }
+}
+
 // ── Response Cache ──
 
 interface CacheEntry {
@@ -131,7 +146,10 @@ function recordCircuitSuccess(): void {
 
 function recordCircuitFailure(): void {
   circuitFailures++;
-  if (circuitFailures >= CIRCUIT_THRESHOLD) circuitOpenedAt = Date.now();
+  if (circuitFailures >= CIRCUIT_THRESHOLD) {
+    circuitOpenedAt = Date.now();
+    log('error', 'circuit_breaker_open', { failures: circuitFailures });
+  }
 }
 
 export function getCircuitState() {
@@ -217,7 +235,7 @@ export class ApiClient {
         recordTiming(path, duration, false);
 
         if (this.config.debug) {
-          console.error(`[velixar] ${path} ${duration}ms`);
+          log('debug', 'api_call', { path, duration_ms: duration });
         }
 
         // Cache successful reads
@@ -250,7 +268,7 @@ export class ApiClient {
         fallbackCount++;
         recordTiming(path, 0, true);
         if (this.config.debug) {
-          console.error(`[velixar] ${path} FALLBACK to stale cache`);
+          log('warn', 'cache_fallback', { path });
         }
         return staleEntry.data as T;
       }
