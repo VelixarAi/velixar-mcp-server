@@ -107,6 +107,13 @@ export async function handleRecallTool(
       open_issues: openContradictions,
       contradiction_count: openContradictions.length,
       pattern_hints: [] as string[],
+      // H9: Per-section freshness — LLM can discount stale sections
+      section_freshness: {
+        relevant_facts: { source: 'search', fetched_at: new Date().toISOString() },
+        recent_activity: { source: 'list', fetched_at: new Date().toISOString() },
+        overview: overviewRes.status === 'fulfilled' ? { source: 'overview', fetched_at: new Date().toISOString() } : { source: 'overview', status: 'unavailable' },
+        contradictions: contradictionsRes.status === 'fulfilled' ? { source: 'contradictions', fetched_at: new Date().toISOString() } : { source: 'contradictions', status: 'unavailable' },
+      },
       justification: justify(
         overview
           ? `Workspace context synthesis from ${overview.total_memories || 0} memories`

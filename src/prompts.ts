@@ -20,17 +20,19 @@ const recall_prior_reasoning: WorkflowPrompt = {
     role: 'user',
     content: `Recall prior reasoning about: {{topic}}
 
-Workflow:
-1. Call velixar_context with topic="{{topic}}" for broad orientation
-2. Call velixar_search for specific memories about this topic
-3. Call velixar_timeline with topic="{{topic}}" to see how thinking evolved
-4. If a specific memory needs detail, call velixar_inspect on it
+Stop conditions (check BEFORE each step):
+- If you already have a clear picture of the reasoning, stop and synthesize.
+- If the topic has no stored memories, say so — do not speculate.
+
+Suggested approach (use at most 3 tool calls):
+1. Start with velixar_context(topic="{{topic}}") for broad orientation.
+2. If the context is insufficient, try velixar_search for specific memories.
+3. If temporal evolution matters, try velixar_timeline(topic="{{topic}}").
 
 Rules:
-- Synthesize a coherent narrative of prior reasoning, not a raw memory dump
+- Synthesize a coherent narrative, not a raw memory dump
 - Cite specific memories by ID when making claims
 - Flag any contradictions or uncertainty
-- Stop when you have a clear picture — do not over-fetch
 
 Output: Brief form (summary, relevant facts, open issues, confidence)`,
   }],
@@ -44,17 +46,20 @@ const build_project_context: WorkflowPrompt = {
     role: 'user',
     content: `Build project context${`{{project}}` !== '{{project}}' ? ' for: {{project}}' : ''}.
 
-Workflow:
-1. Call velixar_context for workspace overview
-2. Call velixar_graph_traverse on key entities to map relationships
-3. Call velixar_patterns to surface recurring motifs
-4. Call velixar_identity to understand user preferences for this workspace
+Stop conditions (check BEFORE each step):
+- If velixar_context gives a clear workspace picture, stop there.
+- If you have enough to start working, stop — don't exhaustively map everything.
+
+Suggested approach (use at most 4 tool calls):
+1. Start with velixar_context for workspace overview.
+2. If key entities are identified, try velixar_graph_traverse on the most important one.
+3. If recurring patterns would help, try velixar_patterns.
+4. If user preferences matter for this project, try velixar_identity.
 
 Rules:
 - Prioritize actionable context over exhaustive history
 - Highlight active contradictions and knowledge gaps
 - Include entity relationships that inform current work
-- Stop after patterns — do not chain further unless gaps are critical
 
 Output: Brief form (summary, relevant facts, open issues, confidence)`,
   }],
@@ -68,16 +73,19 @@ const profile_entity: WorkflowPrompt = {
     role: 'user',
     content: `Profile entity: {{entity}}
 
-Workflow:
-1. Call velixar_graph_traverse with entity="{{entity}}" to find connections
-2. Call velixar_search for memories mentioning this entity
-3. Call velixar_timeline with topic="{{entity}}" to trace its evolution
+Stop conditions (check BEFORE each step):
+- If graph traversal gives a complete picture, stop there.
+- If the entity is sparse (few connections), say so rather than over-fetching.
+
+Suggested approach (use at most 3 tool calls):
+1. Start with velixar_graph_traverse(entity="{{entity}}") to find connections.
+2. If more context is needed, try velixar_search for memories mentioning this entity.
+3. If temporal evolution matters, try velixar_timeline(topic="{{entity}}").
 
 Rules:
 - Build a structured profile: what it is, how it connects, how it changed
 - Distinguish facts (from stored memories) from inferences (from patterns)
 - Flag if entity data is sparse — suggest what to store
-- Stop after timeline — do not over-fetch
 
 Output: Brief form`,
   }],
@@ -91,21 +99,22 @@ const orient_then_narrow: WorkflowPrompt = {
     role: 'user',
     content: `Address this using orient-then-narrow: {{question}}
 
-Workflow:
-1. Call velixar_context to orient broadly
-2. From the context, identify which cognitive mode fits:
+Stop conditions (check BEFORE each step):
+- If velixar_context alone answers the question, stop there.
+- If one specialized tool answers it, stop — do not chain all of them.
+
+Suggested approach (use at most 2 tool calls):
+1. Start with velixar_context to orient broadly.
+2. From the context, identify which cognitive mode fits and use ONE specialized tool:
    - Retrieval → velixar_search
    - Structure → velixar_graph_traverse
    - Continuity → velixar_timeline
    - Conflict → velixar_contradictions
    - Consolidation → velixar_distill
-3. Call the specialized tool for that mode
-4. Stop when the question is answered
 
 Rules:
 - Always start broad, then narrow — never skip orientation
-- Pick exactly ONE specialized tool after context — do not chain all of them
-- If context alone answers the question, stop there
+- Pick exactly ONE specialized tool after context
 - Respect justification: qualify inferred claims, assert retrieved facts
 
 Output: Matches the cognitive mode's output form`,
@@ -122,11 +131,15 @@ const resolve_contradiction: WorkflowPrompt = {
     role: 'user',
     content: `Resolve contradictions${`{{topic}}` !== '{{topic}}' ? ' about: {{topic}}' : ' in this workspace'}.
 
-Workflow:
-1. Call velixar_contradictions to surface active conflicts
-2. For each high-severity contradiction, call velixar_inspect on both memory IDs
-3. Call velixar_timeline to trace when beliefs diverged
-4. Call velixar_identity to check if this reflects a preference shift
+Stop conditions (check BEFORE each step):
+- If contradictions are clear and resolution is obvious, stop after inspecting both sides.
+- If no contradictions exist, say so immediately.
+
+Suggested approach (use at most 4 tool calls):
+1. Start with velixar_contradictions to surface active conflicts.
+2. For each high-severity contradiction, inspect both memory IDs with velixar_inspect.
+3. If temporal context would help, try velixar_timeline to trace when beliefs diverged.
+4. If this might be a preference shift, try velixar_identity.
 
 Rules:
 - Present both sides with evidence before suggesting resolution
@@ -146,16 +159,19 @@ const identify_knowledge_gaps: WorkflowPrompt = {
     role: 'user',
     content: `Identify knowledge gaps${`{{domain}}` !== '{{domain}}' ? ' in: {{domain}}' : ''}.
 
-Workflow:
-1. Call velixar_context for current state of knowledge
-2. Call velixar_graph_traverse on key entities — look for disconnected or sparse nodes
-3. Call velixar_contradictions — unresolved conflicts indicate uncertain areas
+Stop conditions (check BEFORE each step):
+- If context reveals clear gaps, report them — don't keep searching.
+- This is a diagnostic workflow — identify gaps, don't fix them.
+
+Suggested approach (use at most 3 tool calls):
+1. Start with velixar_context for current state of knowledge.
+2. If entity relationships matter, try velixar_graph_traverse on key entities — look for disconnected or sparse nodes.
+3. If conflicts indicate uncertain areas, try velixar_contradictions.
 
 Rules:
 - Distinguish "no data" from "low confidence data" from "conflicting data"
 - Prioritize gaps that block current work
 - Suggest specific memories to store to fill critical gaps
-- Stop after contradictions — this is a diagnostic workflow, not a fix
 
 Output: Gap Report form (knowns, unknowns, blockers, next questions)`,
   }],
@@ -171,10 +187,14 @@ const trace_belief_evolution: WorkflowPrompt = {
     role: 'user',
     content: `Trace the evolution of: {{belief}}
 
-Workflow:
-1. Call velixar_timeline with topic="{{belief}}" for temporal ordering
-2. Call velixar_search for all memories related to this belief
-3. Call velixar_contradictions to find where beliefs conflicted
+Stop conditions (check BEFORE each step):
+- If timeline shows a clear evolution with change points, stop and narrate.
+- If data is sparse, say so — don't over-fetch to fill gaps.
+
+Suggested approach (use at most 3 tool calls):
+1. Start with velixar_timeline(topic="{{belief}}") for temporal ordering.
+2. If more memories are needed, try velixar_search for related content.
+3. If conflicts exist at change points, try velixar_contradictions.
 
 Rules:
 - Present as a chronological narrative with clear change points
@@ -197,10 +217,13 @@ const resume_previous_session: WorkflowPrompt = {
     role: 'user',
     content: `Resume previous session${`{{session_id}}` !== '{{session_id}}' ? ' (session: {{session_id}})' : ''}${`{{topic}}` !== '{{topic}}' ? ' about: {{topic}}' : ''}.
 
-Workflow:
-1. Call velixar_session_recall with session_id or topic to find prior session context
-2. Call velixar_context to get current workspace state
-3. Call velixar_search for any updates since the last session
+Stop conditions (check BEFORE each step):
+- If session_resume gives a complete picture, stop there — it's designed for this.
+- If the user just needs to know where they left off, one call is enough.
+
+Suggested approach (use at most 2 tool calls):
+1. Start with velixar_session_resume — it handles chunking and assembly in one call.
+2. If you need current workspace state beyond the session, try velixar_context.
 
 Rules:
 - Summarize where the user left off
@@ -220,10 +243,14 @@ const reconstruct_decision_path: WorkflowPrompt = {
     role: 'user',
     content: `Reconstruct the decision path for: {{decision}}
 
-Workflow:
-1. Call velixar_timeline with topic="{{decision}}" to find the decision point
-2. Call velixar_inspect on the decision memory and surrounding memories
-3. Call velixar_search for context that informed the decision
+Stop conditions (check BEFORE each step):
+- If timeline shows the decision with clear context, stop and narrate.
+- If the decision memory is self-explanatory, one inspect may suffice.
+
+Suggested approach (use at most 3 tool calls):
+1. Start with velixar_timeline(topic="{{decision}}") to find the decision point.
+2. If the decision memory needs detail, try velixar_inspect on it.
+3. If surrounding context is needed, try velixar_search.
 
 Rules:
 - Present the reasoning chain: context → options considered → decision → rationale
@@ -245,11 +272,14 @@ const distill_session: WorkflowPrompt = {
     role: 'user',
     content: `Distill this session: {{session_summary}}
 
-Workflow:
-1. Identify memory-worthy content: decisions, preferences, bugs solved, patterns discovered
-2. Call velixar_distill for each distinct takeaway (it handles duplicate detection)
-3. Call velixar_retag on stored memories if tags need refinement
-4. Call velixar_consolidate if multiple memories cover the same topic
+Stop conditions (check BEFORE each step):
+- If there's only one memory-worthy takeaway, one velixar_distill call is enough.
+- If content is transient chatter with nothing durable, say so and stop.
+
+Suggested approach (use at most 3 tool calls):
+1. Identify memory-worthy content: decisions, preferences, bugs solved, patterns discovered.
+2. Call velixar_distill for each distinct takeaway (it handles duplicate detection).
+3. If tags need refinement, try velixar_retag. If memories overlap, try velixar_consolidate.
 
 Rules:
 - Only distill content worth remembering long-term — skip transient chatter
@@ -269,10 +299,14 @@ const consolidate_topic_memory: WorkflowPrompt = {
     role: 'user',
     content: `Consolidate memories about: {{topic}}
 
-Workflow:
-1. Call velixar_search for all memories about this topic
-2. Call velixar_consolidate with the found memory IDs and a synthesized summary
-3. Call velixar_retag on the consolidated memory with clean tags
+Stop conditions (check BEFORE each step):
+- If search finds fewer than 2 memories, consolidation isn't needed — say so.
+- If memories don't overlap enough to merge, say so rather than forcing a merge.
+
+Suggested approach (use at most 3 tool calls):
+1. Start with velixar_search for all memories about this topic.
+2. If candidates are found, call velixar_consolidate with the memory IDs and a synthesized summary.
+3. If the consolidated memory needs better tags, try velixar_retag.
 
 Rules:
 - The consolidated memory should capture the current understanding, not history
@@ -292,10 +326,13 @@ const retag_recent_memories: WorkflowPrompt = {
     role: 'user',
     content: `Review and retag recent memories (up to {{count}} or 10).
 
-Workflow:
-1. Call velixar_list to get recent memories
-2. For each memory, evaluate if tags are accurate and complete
-3. Call velixar_retag to fix tags that are missing, wrong, or too generic
+Stop conditions (check BEFORE each step):
+- If all tags look accurate after listing, say so and stop.
+- Only retag memories that actually need it — don't change tags for the sake of it.
+
+Suggested approach (use at most 2 tool calls):
+1. Start with velixar_list to get recent memories and review their tags.
+2. For memories with missing, wrong, or overly generic tags, call velixar_retag.
 
 Rules:
 - Tags should be specific enough to aid retrieval but not so specific they're unique
@@ -317,16 +354,19 @@ const summarize_user_identity: WorkflowPrompt = {
     role: 'user',
     content: `Summarize user identity for this workspace.
 
-Workflow:
-1. Call velixar_identity to get the current profile
-2. Call velixar_search for memories tagged with preferences, expertise, or goals
-3. Call velixar_graph_traverse on identity-related entities
+Stop conditions (check BEFORE each step):
+- If velixar_identity returns a complete profile, stop there.
+- If identity is empty, say so and suggest what to store — don't over-fetch.
+
+Suggested approach (use at most 3 tool calls):
+1. Start with velixar_identity to get the current profile.
+2. If the profile is sparse, try velixar_search for memories tagged with preferences, expertise, or goals.
+3. If entity relationships would enrich the profile, try velixar_graph_traverse on identity-related entities.
 
 Rules:
 - Distinguish stored facts from inferred patterns
 - Flag areas where identity data is sparse or contradictory
 - Present as a structured profile, not a memory dump
-- Note if identity differs from other workspaces (if visible)
 
 Output: Brief form`,
   }],
@@ -340,10 +380,14 @@ const detect_preference_shift: WorkflowPrompt = {
     role: 'user',
     content: `Detect preference shifts${`{{area}}` !== '{{area}}' ? ' in: {{area}}' : ''}.
 
-Workflow:
-1. Call velixar_identity to get current profile
-2. Call velixar_timeline with topic matching the preference area
-3. Call velixar_contradictions to find conflicting preference statements
+Stop conditions (check BEFORE each step):
+- If identity shows clear shifts with timestamps, stop and narrate.
+- If no shifts are detected, say so — don't search for shifts that aren't there.
+
+Suggested approach (use at most 3 tool calls):
+1. Start with velixar_identity to get current profile and any recorded shifts.
+2. If temporal context would help, try velixar_timeline with the preference area as topic.
+3. If conflicts exist, try velixar_contradictions to find conflicting preference statements.
 
 Rules:
 - A preference shift is valid — don't treat it as an error
@@ -363,14 +407,16 @@ const align_response_style: WorkflowPrompt = {
     role: 'user',
     content: `Check and align to user communication preferences.
 
-Workflow:
-1. Call velixar_identity to get communication_style and preferences
+Stop conditions (check BEFORE each step):
+- One tool call is enough. Do not chain further.
+
+Suggested approach (1 tool call):
+1. Call velixar_identity to get communication_style and preferences.
 
 Rules:
 - Apply the user's stated preferences to your response style
 - If no preferences are stored, use neutral professional style
 - Do not over-personalize — respect stated boundaries
-- This is a quick check, not a deep analysis — one tool call is enough
 
 Output: Brief form (just the relevant style preferences)`,
   }],
@@ -388,11 +434,15 @@ const evaluate_enterprise_fit: WorkflowPrompt = {
     role: 'user',
     content: `Evaluate enterprise fit for: {{domain}}
 
-Workflow:
-1. Call velixar_search for any existing memories about {{domain}}
-2. Call velixar_graph_traverse with entity="{{domain}}" to find related entities
-3. Call velixar_context with topic="{{domain}} enterprise evaluation"
-4. Call velixar_patterns with topic="enterprise adoption" for adoption patterns
+Stop conditions (check BEFORE each step):
+- If search and graph give enough signal, stop and evaluate — don't exhaust all tools.
+- If no data exists about this domain, say so and suggest what to gather.
+
+Suggested approach (use at most 4 tool calls):
+1. Start with velixar_search for any existing memories about {{domain}}.
+2. If entities exist, try velixar_graph_traverse(entity="{{domain}}") for relationships.
+3. If broader context would help, try velixar_context(topic="{{domain}} enterprise evaluation").
+4. If adoption patterns are relevant, try velixar_patterns(topic="enterprise adoption").
 
 Evaluate:
 - Team size signals (mentions of teams, departments, org structure)

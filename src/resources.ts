@@ -29,6 +29,7 @@ let _identityFetchedAt: number | null = null;
 let _relevantMemories: MemoryRecord[] | null = null;
 let _relevantStaleAfter = 0; // timestamp after which relevant memories are stale
 let _toolCallsSinceRefresh = 0;
+let _constitutionRead = false; // H1: tracks if host has read constitution resource
 
 const IDENTITY_STALE_MS = 24 * 60 * 60 * 1000; // 24h
 const RELEVANT_STALE_CALLS = 5; // refresh after 5 tool calls
@@ -222,6 +223,7 @@ export function getResourceList() {
 
 export async function readResource(uri: string, api?: ApiClient) {
   if (uri === 'velixar://system/constitution') {
+    _constitutionRead = true;
     return { contents: [{ uri, mimeType: 'text/plain', text: CONSTITUTION }] };
   }
 
@@ -289,4 +291,17 @@ export function getResourceUris(): string[] {
   if (_memories?.length) uris.push('velixar://memories/recent');
   if (_relevantMemories?.length) uris.push('velixar://memories/relevant');
   return uris;
+}
+
+// H1: Compact constitution fallback (~400 tokens) for hosts that don't read resources.
+// Returns the compact text on first call per session, then null.
+const COMPACT_CONSTITUTION = `Velixar Constitution (compact): ` +
+  `Start with velixar_context for orientation, then narrow with the specialized tool matching the cognitive mode. ` +
+  `Modes: Retrieval→search, Structure→graph_traverse, Continuity→timeline, Conflict→contradictions, Consolidation→distill. ` +
+  `Stop when answered. Never dump raw lists. Qualify inferred claims. Surface contradictions. Never leak across workspaces.`;
+
+export function getConstitutionFallback(): string | null {
+  if (_constitutionRead) return null;
+  _constitutionRead = true; // inject once per session
+  return COMPACT_CONSTITUTION;
 }

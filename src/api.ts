@@ -388,11 +388,13 @@ export function makeMeta(config: ApiConfig, overrides: Partial<ResponseMeta> = {
     partial_context: false,
     request_ms: 0,
     ...overrides,
+    // H8: If data_absent, require absence_reason
+    ...(overrides.data_absent && !overrides.absence_reason ? { absence_reason: 'no_data' as const } : {}),
   };
 }
 
 export function wrapResponse<T>(data: T, config: ApiConfig, overrides: Partial<ResponseMeta> = {}): VelixarResponse<T> {
-  return { status: 'ok', data, meta: makeMeta(config, overrides) };
+  return { status: overrides.partial_context ? 'partial' : 'ok', data, meta: makeMeta(config, overrides) };
 }
 
 // ── Error Helpers ──

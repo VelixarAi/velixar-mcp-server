@@ -21,7 +21,7 @@ import { recallTools, handleRecallTool } from './tools/recall.js';
 import { graphTools, handleGraphTool } from './tools/graph.js';
 import { cognitiveTools, handleCognitiveTool } from './tools/cognitive.js';
 import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
-import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity, refreshRelevantMemories, markToolCall, isRelevantStale } from './resources.js';
+import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity, refreshRelevantMemories, markToolCall, isRelevantStale, getConstitutionFallback } from './resources.js';
 import { getPromptList, getPrompt, allPrompts } from './prompts.js';
 
 // ── Init ──
@@ -108,6 +108,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const parsed = JSON.parse(responseText);
         parsed._workspace_warning = wsWarning;
+        responseText = JSON.stringify(parsed);
+      } catch { /* non-JSON response, skip */ }
+    }
+
+    // H1: Constitution fallback — inject compact constitution if host never read the resource
+    const constitutionFallback = getConstitutionFallback();
+    if (constitutionFallback) {
+      try {
+        const parsed = JSON.parse(responseText);
+        parsed._constitution = constitutionFallback;
         responseText = JSON.stringify(parsed);
       } catch { /* non-JSON response, skip */ }
     }

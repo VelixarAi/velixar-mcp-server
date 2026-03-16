@@ -90,13 +90,18 @@ export const lifecycleTools: Tool[] = [
     name: 'velixar_session_recall',
     description:
       'Recall memories from a previous session by session ID, date, or topic. ' +
-      'Use when resuming work to restore prior context.',
+      'Use when resuming work to restore prior context. ' +
+      'Supports chunk_id for drill-down into specific time segments (from session_resume manifest). ' +
+      'Use order="chronological" for full narrative reconstruction (oldest-first).',
     inputSchema: {
       type: 'object',
       properties: {
         session_id: { type: 'string', description: 'Session ID to recall' },
         topic: { type: 'string', description: 'Topic to search for in session memories' },
         chunk_id: { type: 'string', description: 'Specific chunk ID for drill-down into a time segment' },
+        start_time: { type: 'string', description: 'ISO timestamp — only return memories after this time' },
+        end_time: { type: 'string', description: 'ISO timestamp — only return memories before this time' },
+        order: { type: 'string', enum: ['recent_first', 'chronological'], description: 'Sort order (default: recent_first)' },
         limit: { type: 'number', description: 'Max results (default 10)' },
       },
     },
@@ -347,33 +352,106 @@ export async function handleLifecycleTool(
   if (name === 'velixar_session_recall') {
     const sessionId = args.session_id as string;
     const topic = args.topic as string;
+    const chunkId = args.chunk_id as string | undefined;
+    const startTime = args.start_time as string | undefined;
+    const endTime = args.end_time as string | undefined;
+    const order = (args.order as string) || 'recent_first';
     const limit = Math.min((args.limit as number) || 10, 50);
 
     if (!sessionId && !topic) throw new Error('Either session_id or topic required');
 
+    let rawMemories: Array<Record<string, unknown>> = [];
+
     if (sessionId) {
-      // Use backend session endpoint
       const result = await api.get<{ memories?: Array<Record<string, unknown>>; count?: number }>(
         `/memory/session/${sessionId}?limit=${limit}`, true,
       );
-      return {
-        text: JSON.stringify(wrapResponse({
-          session_id: sessionId,
-          memories: result.memories || [],
-          count: result.count || 0,
-        }, config, { data_absent: !(result.memories?.length) })),
-      };
+      rawMemories = result.memories || [];
+    } else {
+      const params = new URLSearchParams({ q: `session ${topic}`, user_id: config.userId, limit: String(limit) });
+      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
+      rawMemories = result.memories || [];
     }
 
-    // Search by topic within session-tagged memories
-    const params = new URLSearchParams({ q: `session ${topic}`, user_id: config.userId, limit: String(limit) });
-    const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
+    // H22: Temporal filtering
+    type TimedMem = Record<string, unknown> & { _ts: number };
+    let memories: TimedMem[] = rawMemories.map(m => {
+      const _ts = new Date(String(m.created_at || m.timestamp || '')).getTime() || 0;
+      return Object.assign({}, m, { _ts }) as TimedMem;
+    });
+
+    if (startTime) {
+      const startMs = new Date(startTime).getTime();
+      if (!isNaN(startMs)) memories = memories.filter(m => m._ts >= startMs);
+    }
+    if (endTime) {
+      const endMs = new Date(endTime).getTime();
+      if (!isNaN(endMs)) memories = memories.filter(m => m._ts <= endMs);
+    }
+
+    // H23: Chronological ordering
+    if (order === 'chronological') {
+      memories.sort((a, b) => a._ts - b._ts);
+    } else {
+      memories.sort((a, b) => b._ts - a._ts);
+    }
+
+    // H24: Build chunk manifest (15-min windows) for navigation
+    const chronological = [...memories].sort((a, b) => a._ts - b._ts);
+    const CHUNK_MS = 15 * 60 * 1000;
+    const manifest: Array<{ id: string; time_range: string; summary: string; count: number }> = [];
+    let cStart = chronological[0]?._ts || 0;
+    let cBuf: typeof chronological = [];
+
+    for (const m of chronological) {
+      if (m._ts - cStart > CHUNK_MS && cBuf.length) {
+        manifest.push({
+          id: `chunk-${manifest.length}`,
+          time_range: `${new Date(cStart).toISOString()} → ${new Date(cBuf[cBuf.length - 1]._ts).toISOString()}`,
+          summary: String(cBuf[0].content || '').slice(0, 100),
+          count: cBuf.length,
+        });
+        cBuf = [];
+        cStart = m._ts;
+      }
+      cBuf.push(m);
+    }
+    if (cBuf.length) {
+      manifest.push({
+        id: `chunk-${manifest.length}`,
+        time_range: `${new Date(cStart).toISOString()} → ${new Date(cBuf[cBuf.length - 1]._ts).toISOString()}`,
+        summary: String(cBuf[0].content || '').slice(0, 100),
+        count: cBuf.length,
+      });
+    }
+
+    // Chunk drill-down: filter to specific chunk if requested
+    if (chunkId && manifest.length) {
+      const idx = parseInt(chunkId.replace('chunk-', ''), 10);
+      if (!isNaN(idx) && idx >= 0 && idx < manifest.length) {
+        const chunk = manifest[idx];
+        const [rangeStart] = chunk.time_range.split(' → ');
+        const rangeStartMs = new Date(rangeStart).getTime();
+        const rangeEndMs = idx + 1 < manifest.length
+          ? new Date(manifest[idx + 1].time_range.split(' → ')[0]).getTime()
+          : Infinity;
+        memories = memories.filter(m => m._ts >= rangeStartMs && m._ts < rangeEndMs);
+      }
+    }
+
+    // Strip internal _ts before returning
+    const cleaned = memories.map(({ _ts, ...rest }) => rest);
+
     return {
       text: JSON.stringify(wrapResponse({
-        topic,
-        memories: result.memories || [],
-        count: (result.memories || []).length,
-      }, config, { data_absent: !(result.memories?.length) })),
+        session_id: sessionId || null,
+        topic: topic || null,
+        order,
+        memories: cleaned,
+        count: cleaned.length,
+        chunk_manifest: manifest,
+        total_chunks: manifest.length,
+      }, config, { data_absent: cleaned.length === 0 })),
     };
   }
 
