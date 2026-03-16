@@ -1,0 +1,132 @@
+{
+  "fixtures": {
+    "solo_developer": {
+      "description": "Solo developer workspace (~100 memories)",
+      "workspace_id": "bench-solo-dev",
+      "memory_count": 100,
+      "topics": ["TypeScript", "React", "deployment", "testing", "debugging"],
+      "entity_types": ["technology", "concept", "project"],
+      "expected_entities": 30,
+      "contradictions": 0,
+      "needle": {
+        "fact": "The API rate limit was changed from 100 to 250 requests per minute on March 1st",
+        "paraphrases": [
+          "What is the current API rate limit?",
+          "When did the rate limit change?",
+          "How many requests per minute are allowed?",
+          "What was the old rate limit before the change?",
+          "Tell me about the March rate limit update"
+        ]
+      }
+    },
+    "research_workspace": {
+      "description": "Research workspace (multiple topics, cross-references)",
+      "workspace_id": "bench-research",
+      "memory_count": 200,
+      "topics": ["machine learning", "NLP", "knowledge graphs", "vector databases", "embeddings", "RAG"],
+      "entity_types": ["technology", "concept", "person", "paper"],
+      "expected_entities": 80,
+      "contradictions": 3,
+      "needle": {
+        "fact": "The HNSW index parameter ef_construction should be set to 200 for optimal recall on our dataset",
+        "paraphrases": [
+          "What ef_construction value should I use for HNSW?",
+          "What are the optimal HNSW parameters?",
+          "How should I configure the vector index?",
+          "What index settings give best recall?",
+          "Tell me about HNSW configuration"
+        ]
+      }
+    },
+    "multi_project": {
+      "description": "Multi-project workspace (3 projects, must not bleed)",
+      "workspace_id": "bench-multi-project",
+      "memory_count": 150,
+      "projects": ["project-alpha", "project-beta", "project-gamma"],
+      "topics_per_project": {
+        "project-alpha": ["React", "frontend", "UI"],
+        "project-beta": ["Python", "backend", "API"],
+        "project-gamma": ["infrastructure", "Terraform", "AWS"]
+      },
+      "expected_entities": 50,
+      "contradictions": 0,
+      "bleed_test": {
+        "query_project": "project-alpha",
+        "query": "Python backend API",
+        "expected_zero_results": true
+      }
+    },
+    "contradictory_preferences": {
+      "description": "Contradictory preference workspace (intentional conflicts)",
+      "workspace_id": "bench-contradictions",
+      "memory_count": 80,
+      "contradictions": [
+        {"a": "I prefer tabs for indentation", "b": "I always use spaces for indentation"},
+        {"a": "We should use MongoDB for flexibility", "b": "We decided PostgreSQL is better for our use case"},
+        {"a": "Microservices are the right architecture", "b": "A monolith would be simpler and better for our team size"},
+        {"a": "Always write tests before code (TDD)", "b": "Writing tests after implementation is more practical"},
+        {"a": "Use REST APIs for everything", "b": "GraphQL is superior for our frontend needs"}
+      ],
+      "expected_contradiction_count": 5
+    }
+  },
+  "gold_tasks": [
+    {
+      "name": "resume_prior_project",
+      "description": "Resume prior project accurately",
+      "fixture": "solo_developer",
+      "success_criteria": "Returns relevant project context with >3 specific facts"
+    },
+    {
+      "name": "detect_changed_preference",
+      "description": "Detect a changed preference",
+      "fixture": "contradictory_preferences",
+      "success_criteria": "Identifies at least 3 of 5 contradictions"
+    },
+    {
+      "name": "reconstruct_decision_trail",
+      "description": "Reconstruct a decision trail",
+      "fixture": "solo_developer",
+      "success_criteria": "Returns chronologically ordered memories with decision rationale"
+    },
+    {
+      "name": "surface_debugging_pattern",
+      "description": "Surface relevant debugging pattern",
+      "fixture": "solo_developer",
+      "success_criteria": "Returns a pattern with >0.5 confidence and supporting memories"
+    },
+    {
+      "name": "summarize_identity",
+      "description": "Summarize identity accurately",
+      "fixture": "solo_developer",
+      "success_criteria": "Returns structured identity with preferences and expertise"
+    },
+    {
+      "name": "trace_concept_evolution",
+      "description": "Trace concept evolution over sessions",
+      "fixture": "research_workspace",
+      "success_criteria": "Returns timeline with >2 change points"
+    },
+    {
+      "name": "avoid_cross_workspace",
+      "description": "Avoid cross-workspace contamination",
+      "fixture": "multi_project",
+      "success_criteria": "Zero results from other projects when querying project-alpha"
+    },
+    {
+      "name": "identify_knowledge_gap",
+      "description": "Identify knowledge gap in partial context",
+      "fixture": "research_workspace",
+      "success_criteria": "Identifies at least 1 unknown or sparse area"
+    }
+  ],
+  "thresholds": {
+    "workspace_isolation": {"baseline": 1.0, "excellence": 1.0},
+    "recall_precision_at_5": {"baseline": 0.7, "excellence": 0.9},
+    "context_relevance": {"baseline": 0.6, "excellence": 0.85},
+    "tool_selection_accuracy": {"baseline": 0.8, "excellence": 0.95},
+    "token_efficiency": {"baseline": 0.4, "excellence": 0.7},
+    "time_to_first_context_ms": {"baseline": 2000, "excellence": 500},
+    "contradiction_detection_precision": {"baseline": 0.65, "excellence": 0.85}
+  }
+}

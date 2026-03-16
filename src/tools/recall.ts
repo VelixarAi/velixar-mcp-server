@@ -50,10 +50,12 @@ export async function handleRecallTool(
     const compact = args.compact !== false;
 
     // Parallel fetch: search (topic or general), recent list, overview, contradictions
+    // Returns partial results if some fail — time-to-first-useful-context optimization
     const searchQ = topic || 'important recent context';
     const params = new URLSearchParams({ q: searchQ, user_id: config.userId, limit: compact ? '5' : '10' });
     const listParams = new URLSearchParams({ user_id: config.userId, limit: '5' });
 
+    const startMs = Date.now();
     const [searchRes, listRes, overviewRes, contradictionsRes] = await Promise.allSettled([
       api.get<{ memories?: Array<Record<string, unknown>>; count?: number }>(`/memory/search?${params}`, true),
       api.get<{ memories?: Array<Record<string, unknown>>; count?: number }>(`/memory/list?${listParams}`, true),
@@ -116,12 +118,14 @@ export async function handleRecallTool(
     };
 
     const partial = [searchRes, listRes, overviewRes, contradictionsRes].some(r => r.status === 'rejected');
+    const contextMs = Date.now() - startMs;
 
     return {
       text: JSON.stringify(wrapResponse(brief, config, {
         data_absent: relevantFacts.length === 0 && recentItems.length === 0,
         partial_context: partial,
         contradictions_present: openContradictions.length > 0,
+        request_ms: contextMs,
       })),
     };
   }
