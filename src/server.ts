@@ -24,6 +24,35 @@ import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
 import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity, refreshRelevantMemories, markToolCall, isRelevantStale, getConstitutionFallback } from './resources.js';
 import { getPromptList, getPrompt, allPrompts } from './prompts.js';
 
+// ── AH-5: Anti-pattern detection ──
+const REINFORCE_INTERVAL = parseInt(process.env.VELIXAR_CONSTITUTION_REINFORCE_INTERVAL || '10', 10);
+let _toolCallCount = 0;
+let _recentToolCalls: string[] = []; // last 5 tool names for pattern detection
+let _promptReadCount = 0;
+
+function detectAntiPattern(toolName: string): string | null {
+  const recent = _recentToolCalls;
+  // Sequential searches that should be batched
+  if (toolName === 'velixar_search' && recent.length >= 1 && recent[recent.length - 1] === 'velixar_search') {
+    return 'Tip: use velixar_batch_search for multiple queries in one call.';
+  }
+  // Search right after context with no other tool in between
+  if (toolName === 'velixar_search' && recent.length >= 1 && recent[recent.length - 1] === 'velixar_context') {
+    return 'Note: velixar_context already includes KG-boosted search results. Only use velixar_search if you need a different query.';
+  }
+  // Store without prior search (check last 3 calls)
+  if (toolName === 'velixar_store' && !recent.slice(-3).some(t => t === 'velixar_search' || t === 'velixar_context' || t === 'velixar_batch_search')) {
+    return 'Warning: search before storing to avoid duplicates.';
+  }
+  return null;
+}
+
+function trackToolCall(toolName: string): void {
+  _toolCallCount++;
+  _recentToolCalls.push(toolName);
+  if (_recentToolCalls.length > 5) _recentToolCalls.shift();
+}
+
 // ── Init ──
 
 const config = loadConfig();
@@ -79,7 +108,12 @@ server.setRequestHandler(ReadResourceRequestSchema, async (req) => readResource(
 // ── Prompts ──
 
 server.setRequestHandler(ListPromptsRequestSchema, async () => getPromptList());
-server.setRequestHandler(GetPromptRequestSchema, async (req) => getPrompt(req.params.name, (req.params.arguments || {}) as Record<string, string>));
+server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+  // AH-6: Log prompt reads for observability
+  _promptReadCount++;
+  log('info', 'prompt_read', { prompt: req.params.name, host: detectedHost, total_reads: _promptReadCount });
+  return getPrompt(req.params.name, (req.params.arguments || {}) as Record<string, string>);
+});
 
 // ── Tools ──
 
@@ -110,6 +144,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     log('info', 'tool_call', { tool: name, duration_ms: Date.now() - start, error: false });
 
+    // AH-5: Track tool call sequence for anti-pattern detection
+    trackToolCall(name);
+
     // Workspace cross-validation warning
     const wsWarning = validateWorkspace(config);
     let responseText = result.text;
@@ -127,6 +164,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const parsed = JSON.parse(responseText);
         parsed._constitution = constitutionFallback;
+        responseText = JSON.stringify(parsed);
+      } catch { /* non-JSON response, skip */ }
+    }
+
+    // AH-5: Constitution reinforcement every N calls (if host never reads prompts)
+    if (_promptReadCount === 0 && _toolCallCount > 1 && _toolCallCount % REINFORCE_INTERVAL === 0) {
+      try {
+        const parsed = JSON.parse(responseText);
+        parsed._constitution_reminder = 'Orient first (velixar_context), then narrow with one specialized tool. Batch independent ops. Never fabricate data.';
+        responseText = JSON.stringify(parsed);
+      } catch { /* non-JSON response, skip */ }
+    }
+
+    // AH-5: Anti-pattern hint injection
+    const antiPatternHint = detectAntiPattern(name);
+    if (antiPatternHint) {
+      log('info', 'anti_pattern_detected', { tool: name, hint: antiPatternHint });
+      try {
+        const parsed = JSON.parse(responseText);
+        parsed._hint = antiPatternHint;
         responseText = JSON.stringify(parsed);
       } catch { /* non-JSON response, skip */ }
     }

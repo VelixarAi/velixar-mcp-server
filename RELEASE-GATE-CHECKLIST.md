@@ -50,6 +50,13 @@
 - [ ] No new TypeScript compiler errors
 - [ ] Build succeeds clean
 
+### Gate 9: Prompt Impact (S3)
+- [ ] If API behavior changed: reviewed prompts that reference affected tools (check tool-prompt-matrix.json)
+- [ ] If new tool added: added to tool-prompt-matrix.json and referenced in relevant prompts
+- [ ] If tool removed: removed from all prompts and tool-prompt-matrix.json
+- [ ] Prompt freshness test passes (`node tests/prompt-freshness.test.js`)
+- [ ] Prompt integration test passes (`node tests/prompt-integration.test.js`)
+
 ## Sign-off
 - [ ] All gates passed
 - Reviewer: _______________

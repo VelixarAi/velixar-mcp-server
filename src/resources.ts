@@ -6,6 +6,7 @@
 
 import type { ApiClient } from './api.js';
 import type { ApiConfig } from './types.js';
+import { COGNITIVE_MODES, renderModesTable } from './prompts.js';
 
 interface MemoryRecord {
   id?: string;
@@ -43,14 +44,7 @@ const CONSTITUTION = `# Velixar Cognitive Constitution v${CONSTITUTION_VERSION}
 Prefer the smallest tool that answers the current cognitive question.
 
 ## Cognitive Modes
-| Mode | Question | First Tool |
-|------|----------|------------|
-| Orientation | "Understand the situation broadly" | velixar_context |
-| Retrieval | "I know what I'm looking for" | velixar_search |
-| Structure | "Understand connections" | velixar_graph_traverse |
-| Continuity | "How did this evolve?" | velixar_timeline |
-| Conflict | "Something contradicts" | velixar_contradictions |
-| Consolidation | "Preserve what matters" | velixar_distill |
+${renderModesTable()}
 
 ## Master Pattern: Orient Then Narrow
 1. Start with velixar_context for broad orientation
