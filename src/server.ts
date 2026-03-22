@@ -82,7 +82,7 @@ const systemToolNames = new Set(systemTools.map(t => t.name));
 // ── Server ──
 
 const server = new Server(
-  { name: 'velixar-mcp-server', version: '1.0.0' },
+  { name: 'velixar-mcp-server', version: '1.1.0' },
   { capabilities: { tools: {}, resources: {}, prompts: {} } },
 );
 
@@ -204,7 +204,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const msg = error instanceof Error ? error.message : String(error);
     log('error', 'tool_error', { tool: name, duration_ms: Date.now() - start, error: msg });
     // Alert-level for critical failures
-    if (name === 'velixar_store' || name === 'velixar_batch_store' || name === 'velixar_import') {
+    if (name === 'velixar_store' || name === 'velixar_batch_store' || name === 'velixar_import' || name === 'velixar_upload') {
       log('error', 'alert:memory_store_failure', { tool: name, error: msg });
     }
     return {
@@ -214,7 +214,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// ── Health Check HTTP Server (optional) ──
+// ── Health Check HTTP Server (optional, standalone mode) ──
 
 const healthPort = process.env.VELIXAR_HEALTH_PORT ? parseInt(process.env.VELIXAR_HEALTH_PORT, 10) : 0;
 if (healthPort > 0) {
@@ -233,7 +233,137 @@ if (healthPort > 0) {
   }).listen(healthPort, () => log('info', 'health_server_started', { port: healthPort }));
 }
 
-// ── Start ──
+// ── Start: HTTP or Stdio transport ──
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+const httpPort = process.env.VELIXAR_MCP_HTTP_PORT ? parseInt(process.env.VELIXAR_MCP_HTTP_PORT, 10) : 0;
+
+if (httpPort > 0) {
+  // ── Streamable HTTP transport (for Marco Polo / remote MCP clients) ──
+  const { StreamableHTTPServerTransport } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
+  const { createServer, IncomingMessage, ServerResponse } = await import('node:http');
+  const { randomUUID } = await import('node:crypto');
+
+  // Per-session transports (stateful mode)
+  const sessions = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
+
+  const CORS_HEADERS: Record<string, string> = {
+    'Access-Control-Allow-Origin': process.env.VELIXAR_MCP_CORS_ORIGIN || '*',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Session-Id',
+    'Access-Control-Expose-Headers': 'Mcp-Session-Id',
+  };
+
+  const httpServer = createServer(async (req: InstanceType<typeof IncomingMessage>, res: InstanceType<typeof ServerResponse>) => {
+    // CORS preflight
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, CORS_HEADERS);
+      res.end();
+      return;
+    }
+
+    // Apply CORS to all responses
+    for (const [k, v] of Object.entries(CORS_HEADERS)) res.setHeader(k, v);
+
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+    // Health endpoint
+    if (url.pathname === '/health' && req.method === 'GET') {
+      try {
+        const health = await api.get<Record<string, unknown>>('/health', true);
+        const circuit = (await import('./api.js')).getCircuitState();
+        res.writeHead(circuit.open ? 503 : 200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: circuit.open ? 'degraded' : 'ok', transport: 'http', sessions: sessions.size, circuit, api: health }));
+      } catch {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'error', transport: 'http' }));
+      }
+      return;
+    }
+
+    // MCP endpoint
+    if (url.pathname === '/mcp') {
+      // Check for existing session
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+      if (req.method === 'POST') {
+        // Check if this is an initialize request (new session)
+        if (!sessionId) {
+          // New session — create transport
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            enableJsonResponse: true,
+          });
+
+          // Wire up the server to this transport
+          transport.onclose = () => {
+            const sid = (transport as any).sessionId;
+            if (sid) sessions.delete(sid);
+            log('info', 'http_session_closed', { session_id: sid });
+          };
+
+          await server.connect(transport);
+
+          // Handle the request — this will set the session ID
+          await transport.handleRequest(req, res);
+
+          // Store the transport by session ID
+          const sid = res.getHeader('mcp-session-id') as string;
+          if (sid) {
+            sessions.set(sid, transport);
+            log('info', 'http_session_created', { session_id: sid });
+          }
+          return;
+        }
+
+        // Existing session
+        const existingTransport = sessions.get(sessionId);
+        if (!existingTransport) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Session not found', code: 'SESSION_NOT_FOUND' }));
+          return;
+        }
+        await existingTransport.handleRequest(req, res);
+        return;
+      }
+
+      if (req.method === 'GET') {
+        // SSE stream for server-initiated messages
+        if (sessionId && sessions.has(sessionId)) {
+          await sessions.get(sessionId)!.handleRequest(req, res);
+          return;
+        }
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session ID required for GET' }));
+        return;
+      }
+
+      if (req.method === 'DELETE') {
+        // Session termination
+        if (sessionId && sessions.has(sessionId)) {
+          const t = sessions.get(sessionId)!;
+          await t.handleRequest(req, res);
+          sessions.delete(sessionId);
+          log('info', 'http_session_terminated', { session_id: sessionId });
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found' }));
+        return;
+      }
+    }
+
+    // 404 for everything else
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health'] }));
+  });
+
+  httpServer.listen(httpPort, () => {
+    log('info', 'http_transport_started', { port: httpPort, endpoint: `/mcp` });
+    console.error(`Velixar MCP Server (HTTP) listening on http://localhost:${httpPort}/mcp`);
+  });
+
+} else {
+  // ── Stdio transport (default, for local MCP clients) ──
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}

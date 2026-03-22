@@ -97,6 +97,7 @@ export async function handleMemoryTool(
       tier: (args.tier as number) ?? 2,
       tags: (args.tags as string[]) || [],
       author: { type: 'agent', agent_id: config.userId },
+      source_type: 'mcp_store',
     });
     const result = validateStoreResponse(raw, '/memory');
     return { text: JSON.stringify(wrapResponse({ id: result.id }, config)) };

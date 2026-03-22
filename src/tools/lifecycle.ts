@@ -243,6 +243,23 @@ export const lifecycleTools: Tool[] = [
       required: ['data'],
     },
   },
+  {
+    name: 'velixar_upload',
+    description:
+      'Upload a file from the local filesystem into Velixar memory with full source provenance. ' +
+      'Supports PDF, Markdown, text, CSV, JSON, DOCX, and code files. ' +
+      'The file is parsed, chunked, and stored as memories tagged with source metadata (filename, hash, page numbers). ' +
+      'Use for importing external documents — resulting memories are traceable back to the original file. ' +
+      'Do NOT use for plain text snippets (use velixar_store or velixar_import instead).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string', description: 'Absolute path to the file to upload (e.g. /Users/me/docs/report.pdf)' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags to apply to all resulting memories' },
+      },
+      required: ['file_path'],
+    },
+  },
 ];
 
 export async function handleLifecycleTool(
@@ -329,6 +346,7 @@ export async function handleLifecycleTool(
       tier: 2,
       tags,
       author: { type: 'distill', agent_id: config.userId },
+      source_type: 'mcp_distill',
     });
 
     if (result.error) throw new Error(result.error);
@@ -375,6 +393,7 @@ export async function handleLifecycleTool(
       tier: 2,
       tags,
       author: { type: 'agent', session_id: sessionId },
+      source_type: 'mcp_session',
     });
 
     if (result.error) throw new Error(result.error);
@@ -388,6 +407,7 @@ export async function handleLifecycleTool(
         tier: 2,
         tags: [...tags, 'session_summary'],
         author: { type: 'agent', session_id: sessionId },
+        source_type: 'mcp_session',
       });
     } catch { /* non-blocking — raw is the primary */ }
 
@@ -681,6 +701,7 @@ export async function handleLifecycleTool(
           tier: item.tier ?? 2,
           tags: item.tags || autoTags(item.content),
           author: { type: 'user' },
+          source_type: 'mcp_batch',
         });
         if (res.id) recordIdempotency(item.content, res.id);
         return res;
@@ -934,6 +955,8 @@ export async function handleLifecycleTool(
           tags: [...(item.tags || []), ...defaultTags, ...(source ? [`source:${source}`] : [])],
           tier: item.tier ?? 2,
           user_id: config.userId,
+          source_type: 'mcp_import',
+          source_file: source || undefined,
         });
         if (res.id) recordIdempotency(item.content, res.id);
         return res;
@@ -963,6 +986,102 @@ export async function handleLifecycleTool(
         } : undefined,
         // M22: Rate limit hint for large imports
         ...(items.length > 20 ? { rate_limit_hint: 'Large import — consider splitting into batches of 20 for optimal extraction throughput.' } : {}),
+      }, config)),
+    };
+  }
+
+  if (name === 'velixar_upload') {
+    const filePath = args.file_path as string;
+    const userTags = (args.tags as string[]) || [];
+
+    const { readFileSync, existsSync, statSync } = await import('node:fs');
+    const { basename, extname } = await import('node:path');
+    const { createHash } = await import('node:crypto');
+
+    if (!existsSync(filePath)) {
+      return { text: JSON.stringify({ status: 'error', error: `File not found: ${filePath}` }), isError: true };
+    }
+
+    const stat = statSync(filePath);
+    if (stat.size > 50 * 1024 * 1024) {
+      return { text: JSON.stringify({ status: 'error', error: 'File exceeds 50MB limit' }), isError: true };
+    }
+
+    const filename = basename(filePath);
+    const ext = extname(filePath).toLowerCase().replace('.', '');
+    const mimeMap: Record<string, string> = {
+      pdf: 'application/pdf', md: 'text/markdown', txt: 'text/plain',
+      csv: 'text/csv', json: 'application/json', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      py: 'text/x-python', js: 'text/javascript', ts: 'text/typescript',
+      rs: 'text/x-rust', go: 'text/x-go', java: 'text/x-java',
+      rb: 'text/x-ruby', c: 'text/x-c', cpp: 'text/x-c++',
+      html: 'text/html', xml: 'text/xml', yaml: 'text/yaml', yml: 'text/yaml',
+    };
+    const mimeType = mimeMap[ext] || 'application/octet-stream';
+
+    const fileBytes = readFileSync(filePath);
+    const contentHash = createHash('sha256').update(fileBytes).digest('hex');
+
+    // Step 1: Get presigned URL
+    let presignRes: { upload_id?: string; upload_url?: string };
+    try {
+      presignRes = await api.post<{ upload_id?: string; upload_url?: string }>('/upload/presign', {
+        filename, mime_type: mimeType, size_bytes: stat.size, content_hash: contentHash,
+        ...(userTags.length ? { tags: userTags } : {}),
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const isWaf = msg.includes('403') || msg.includes('WAF');
+      return {
+        text: JSON.stringify({ status: 'error', error: isWaf
+          ? 'Upload blocked by firewall — contact support. Request may have triggered WAF rules.'
+          : `Presign failed: ${msg}` }),
+        isError: true,
+      };
+    }
+
+    const uploadId = presignRes.upload_id;
+    const uploadUrl = presignRes.upload_url;
+    if (!uploadId || !uploadUrl) {
+      return { text: JSON.stringify({ status: 'error', error: 'Presign response missing upload_id or upload_url' }), isError: true };
+    }
+
+    // Step 2: Upload to S3
+    try {
+      const s3Res = await fetch(uploadUrl, {
+        method: 'PUT',
+        body: fileBytes,
+        headers: { 'Content-Type': mimeType },
+      });
+      if (!s3Res.ok) {
+        return { text: JSON.stringify({ status: 'error', error: `S3 upload failed: ${s3Res.status}` }), isError: true };
+      }
+    } catch (e) {
+      return { text: JSON.stringify({ status: 'error', error: `S3 upload failed: ${e instanceof Error ? e.message : e}` }), isError: true };
+    }
+
+    // Step 3: Trigger ingestion
+    let ingestRes: { status?: string; stored?: number; skipped?: number; total_chunks?: number; skip_reasons?: string[] };
+    try {
+      ingestRes = await api.post<typeof ingestRes>('/upload/ingest', {
+        upload_id: uploadId, filename, content_hash: contentHash,
+        ...(userTags.length ? { tags: userTags } : {}),
+      });
+    } catch (e) {
+      return { text: JSON.stringify({ status: 'error', error: `Ingest failed: ${e instanceof Error ? e.message : e}`, upload_id: uploadId }), isError: true };
+    }
+
+    return {
+      text: JSON.stringify(wrapResponse({
+        upload_id: uploadId,
+        filename,
+        content_hash: contentHash,
+        status: ingestRes.status || 'complete',
+        chunks_created: ingestRes.stored || 0,
+        skipped: ingestRes.skipped || 0,
+        total_chunks: ingestRes.total_chunks || 0,
+        skip_reasons: ingestRes.skip_reasons || [],
+        source_type: 'upload',
       }, config)),
     };
   }
