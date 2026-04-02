@@ -14,10 +14,8 @@ export const recallTools: Tool[] = [
   {
     name: 'velixar_context',
     description:
-      'Synthesize the best working brief for the current workspace. Use when broad orientation is needed — starting a task, resuming work, or unclear what is relevant. ' +
-      'Do NOT use when you know the exact entity to inspect (use velixar_inspect) or have a specific search query (use velixar_search). ' +
-      'Returns: summary, relevant facts, open issues, contradiction flags, pattern hints. ' +
-      'This is the recommended first tool for any new task — orient, then narrow.',
+      'Synthesize the best working brief for the current workspace. Recommended first tool for any new task. ' +
+      'Returns summary, relevant facts, open issues, contradiction flags, and pattern hints.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -29,8 +27,7 @@ export const recallTools: Tool[] = [
   {
     name: 'velixar_inspect',
     description:
-      'Deep inspection of a specific memory — raw content, provenance, relations, chain links. ' +
-      'Use to explain or debug a specific recall. Do NOT use for broad search (use velixar_search first to find IDs).',
+      'Deep inspection of a specific memory — raw content, provenance, relations, chain links.',
     inputSchema: {
       type: 'object',
       properties: {

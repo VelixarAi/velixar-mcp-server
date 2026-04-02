@@ -76,26 +76,26 @@ export const memoryTools: Tool[] = [
   },
   {
     name: 'velixar_update',
-    description:
-      "Update an existing memory's content or tags. Use velixar_list to find memory IDs first.",
+    description: "Update an existing memory's content or tags.",
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Memory ID to update' },
+        memory_id: { type: 'string', description: 'Memory ID to update' },
+        id: { type: 'string', description: 'Alias for memory_id (backward compat)' },
         content: { type: 'string', description: 'New content' },
         tags: { type: 'array', items: { type: 'string' }, description: 'New tags' },
       },
-      required: ['id'],
     },
   },
   {
     name: 'velixar_delete',
-    description: 'Delete or archive a memory by ID. Use archive: true for soft-delete (recoverable). Accepts bulk IDs.',
+    description: 'Delete or archive memories. Use archive: true for soft-delete (recoverable).',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Memory ID to delete (single)' },
-        ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs to delete (bulk). Use instead of id for multiple.' },
+        memory_id: { type: 'string', description: 'Memory ID to delete (single)' },
+        id: { type: 'string', description: 'Alias for memory_id (backward compat)' },
+        ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs to delete (bulk)' },
         archive: { type: 'boolean', description: 'Soft-delete: set archived=true instead of hard-deleting (default: false)' },
       },
     },
@@ -224,20 +224,21 @@ export async function handleMemoryTool(
   }
 
   if (name === 'velixar_update') {
+    const memoryId = (args.memory_id || args.id) as string;
+    if (!memoryId) throw new Error('memory_id or id required');
     const body: Record<string, unknown> = { user_id: config.userId };
     if (args.content) body.content = args.content;
     if (args.tags) body.tags = args.tags;
-    const raw = await api.patch<unknown>(`/memory/${args.id}`, body);
-    validateMutationResponse(raw, `/memory/${args.id}`);
-    return { text: JSON.stringify(wrapResponse({ id: args.id as string }, config)) };
+    const raw = await api.patch<unknown>(`/memory/${memoryId}`, body);
+    validateMutationResponse(raw, `/memory/${memoryId}`);
+    return { text: JSON.stringify(wrapResponse({ id: memoryId, action: 'updated' }, config)) };
   }
 
   if (name === 'velixar_delete') {
     const archive = args.archive as boolean;
-    // Collect IDs — support single id or bulk ids
     const targetIds: string[] = args.ids
       ? (args.ids as string[])
-      : args.id ? [args.id as string] : [];
+      : (args.memory_id || args.id) ? [(args.memory_id || args.id) as string] : [];
     if (targetIds.length === 0) throw new Error('id or ids required');
 
     if (archive) {

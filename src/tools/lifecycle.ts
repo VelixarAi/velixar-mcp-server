@@ -236,11 +236,8 @@ export const lifecycleTools: Tool[] = [
   {
     name: 'velixar_upload',
     description:
-      'Upload a file from the local filesystem into Velixar memory with full source provenance. ' +
-      'Supports PDF, Markdown, text, CSV, JSON, DOCX, and code files. ' +
-      'The file is parsed, chunked, and stored as memories tagged with source metadata (filename, hash, page numbers). ' +
-      'Use for importing external documents — resulting memories are traceable back to the original file. ' +
-      'Do NOT use for plain text snippets (use velixar_store or velixar_import instead).',
+      'Upload a file into Velixar memory with full source provenance. ' +
+      'Supports PDF, Markdown, text, CSV, JSON, DOCX, and code files. Parsed, chunked, and tagged with source metadata.',
     inputSchema: {
       type: 'object',
       properties: {

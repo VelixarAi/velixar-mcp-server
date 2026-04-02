@@ -45,7 +45,7 @@ function detectAntiPattern(toolName: string): string | null {
 
   // Sequential single searches that should be batched or use multi_search
   if (toolName === 'velixar_search' && last === 'velixar_search') {
-    return 'Tip: use velixar_batch_search for independent queries, or velixar_multi_search for merged results with deduplication.';
+    return 'Tip: use velixar_multi_search for merged results with deduplication, or merge:false for per-query results.';
   }
   // Single search right after context — context already searched
   if (toolName === 'velixar_search' && last === 'velixar_context') {

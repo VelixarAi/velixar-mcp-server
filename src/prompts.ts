@@ -70,7 +70,7 @@ Search results are automatically enhanced by the knowledge graph:
 
 ## Batch Operations
 When multiple independent searches or stores are needed, prefer batch tools:
-- velixar_batch_search: run up to 10 queries in one call
+- velixar_multi_search with merge:false: run up to 5 queries in one call (replaces batch_search)
 - velixar_batch_store: store up to 20 memories in one call
 
 ## Error Handling
@@ -198,7 +198,7 @@ Rules:
 - Pick exactly ONE specialized tool after context
 - Respect justification: qualify inferred claims, assert retrieved facts
 - Note: velixar_search already includes KG-boosted results (graph neighbors, chain links, recency weighting) — you do NOT need to manually traverse after searching
-- If multiple independent lookups are needed, use velixar_batch_search instead of sequential calls
+- If multiple independent lookups are needed, use velixar_multi_search instead of sequential calls
 
 Output: Matches the cognitive mode's output form`,
   }],

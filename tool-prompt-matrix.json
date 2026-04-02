@@ -9,7 +9,6 @@
     "velixar_timeline": ["recall_prior_reasoning", "trace_belief_evolution", "resolve_contradiction", "reconstruct_decision_path", "detect_preference_shift"],
     "velixar_contradictions": ["resolve_contradiction", "identify_knowledge_gaps", "detect_preference_shift", "org_knowledge_review"],
     "velixar_distill": ["distill_session"],
-    "velixar_batch_search": ["orient_then_narrow"],
     "velixar_batch_store": ["distill_session"],
     "velixar_inspect": ["resolve_contradiction", "reconstruct_decision_path"],
     "velixar_patterns": ["build_project_context", "org_knowledge_review", "evaluate_product_fit"],
@@ -33,9 +32,12 @@
     "velixar_discover_data": [],
     "velixar_list_sources": [],
     "velixar_query_source": [],
-    "velixar_multi_search": [],
+    "velixar_multi_search": ["orient_then_narrow"],
     "velixar_search_neighborhood": [],
     "velixar_coverage_check": [],
+    "velixar_graph_search": [],
+    "velixar_graph_stats": [],
+    "velixar_audit_log": [],
     "velixar_prepare_context": [],
     "velixar_refine_context": []
   }
