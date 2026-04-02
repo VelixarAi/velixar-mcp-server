@@ -24,6 +24,8 @@ const ERROR_REGISTRY: Record<string, Omit<StructuredError, 'message'>> = {
   INVALID_PARAMS: { error_code: 'INVALID_PARAMS', retryable: false, suggestion: 'Check parameter types and values', severity: 'low' },
   ENTITY_NOT_FOUND: { error_code: 'ENTITY_NOT_FOUND', retryable: false, suggestion: 'Use velixar_graph_search to find entities by name', severity: 'low' },
   WORKSPACE_MISMATCH: { error_code: 'WORKSPACE_MISMATCH', retryable: false, suggestion: 'Verify workspace configuration', severity: 'high' },
+  QUARANTINE_VIOLATION: { error_code: 'QUARANTINE_VIOLATION', retryable: false, suggestion: 'Memory is in a quarantine zone — check zone permissions', severity: 'high' },
+  ARCHIVE_FAILED: { error_code: 'ARCHIVE_FAILED', retryable: true, suggestion: 'Retry the archive operation', severity: 'medium', retry_after_seconds: 5 },
 };
 
 const STRUCTURED_ERRORS_ENABLED = process.env.VELIXAR_STRUCTURED_ERRORS === 'true';

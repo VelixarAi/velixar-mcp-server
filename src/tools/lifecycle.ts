@@ -736,11 +736,41 @@ export async function handleLifecycleTool(
 
   if (name === 'velixar_batch_store') {
     const items = (args.items as Array<{ content: string; tags?: string[]; tier?: number }>).slice(0, 20);
+
+    // Build 1.3: Intra-batch dedup — detect near-duplicate items within the batch by content hash
+    const seen = new Map<string, number>(); // hash → first index
+    const intraBatchDupes = new Set<number>();
+    for (let i = 0; i < items.length; i++) {
+      const hash = items[i].content.trim().toLowerCase().slice(0, 200);
+      if (seen.has(hash)) {
+        intraBatchDupes.add(i);
+      } else {
+        seen.set(hash, i);
+      }
+    }
+
     const results = await Promise.allSettled(
-      items.map(async item => {
+      items.map(async (item, idx) => {
+        // Intra-batch duplicate
+        if (intraBatchDupes.has(idx)) {
+          return { id: undefined, status: 'skipped_intra_batch_duplicate' as const };
+        }
         // Idempotency: skip if same content was stored recently
         const existingId = checkIdempotency(config.workspaceId, item.content);
-        if (existingId) return { id: existingId, deduplicated: true };
+        if (existingId) return { id: existingId, status: 'skipped_duplicate' as const };
+
+        // Build 1.3: Distill always checks duplicates (per Round 2 Chain 10)
+        // For batch_store, do a lightweight similarity check
+        let similarWarning: string | undefined;
+        try {
+          const searchParams = new URLSearchParams({ q: item.content.slice(0, 200), user_id: config.userId, limit: '1' });
+          const searchRaw = await api.get<unknown>(`/memory/search?${searchParams}`, false);
+          const searchResult = validateSearchResponse(searchRaw, '/memory/search');
+          if (searchResult.memories.length > 0 && (searchResult.memories[0].score ?? 0) >= 0.95) {
+            similarWarning = `similar to existing memory ${searchResult.memories[0].id}`;
+          }
+        } catch { /* non-blocking */ }
+
         const res = await api.post<{ id?: string; error?: string }>('/memory', {
           content: item.content,
           user_id: config.userId,
@@ -750,7 +780,7 @@ export async function handleLifecycleTool(
           source_type: 'mcp_batch',
         });
         if (res.id) recordIdempotency(config.workspaceId, item.content, res.id);
-        return res;
+        return { id: res.id, status: 'stored' as const, similar_warning: similarWarning };
       }),
     );
 
@@ -758,22 +788,23 @@ export async function handleLifecycleTool(
       const val = r.status === 'fulfilled' ? r.value as Record<string, unknown> : null;
       return {
         index: i,
-        status: r.status === 'fulfilled' && !val?.error ? 'ok' : 'error',
+        status: r.status === 'fulfilled' && !val?.error ? (val?.status as string || 'stored') : 'error',
         id: val?.id as string | undefined,
-        deduplicated: val?.deduplicated === true,
+        similar_warning: val?.similar_warning as string | undefined,
         error: r.status === 'rejected' ? String(r.reason) : val?.error ? String(val.error) : undefined,
-        // H25: Include content preview on failures so client knows what to retry
         ...(r.status === 'rejected' || val?.error ? { content_preview: items[i].content.slice(0, 80) } : {}),
       };
     });
 
+    const stored = statuses.filter(s => s.status === 'stored').length;
+    const skipped = statuses.filter(s => s.status.startsWith('skipped')).length;
     const failed = statuses.filter(s => s.status === 'error');
     return {
       text: JSON.stringify(wrapResponse({
         items: statuses,
-        stored_count: statuses.filter(s => s.status === 'ok').length,
+        stored_count: stored,
+        skipped_count: skipped,
         error_count: failed.length,
-        // H25: Retry guidance
         ...(failed.length ? { retry_hint: `${failed.length} item(s) failed. Retry only the failed indices: [${failed.map(f => f.index).join(', ')}]` } : {}),
       }, config)),
     };
