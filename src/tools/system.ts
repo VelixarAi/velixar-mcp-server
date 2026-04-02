@@ -8,6 +8,12 @@ import type { ApiConfig } from '../types.js';
 import { getTimings, getRetryStats, getCircuitState, getRateLimitInfo } from '../api.js';
 import { getErrorRegistry } from '../errors.js';
 
+// H1.4/Chain 8: Track whether backend capabilities have been verified
+let _capabilitiesVerified = false;
+
+export function setCapabilitiesVerified(v: boolean): void { _capabilitiesVerified = v; }
+export function isCapabilitiesVerified(): boolean { return _capabilitiesVerified; }
+
 const VERSION = '0.5.0';
 
 // Build 7.1: Audit log — in-memory ring buffer of recent tool calls
@@ -120,6 +126,7 @@ export async function handleSystemTool(
           search: result.search,
           latency_ms: latency,
           circuit_breaker: circuit.open ? 'open' : 'closed',
+          capabilities_verified: _capabilitiesVerified,
           tool_tier: parseInt(process.env.VELIXAR_TOOL_TIER || '3', 10),
           version: VERSION,
         }, config, { request_ms: latency })),

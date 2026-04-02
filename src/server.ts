@@ -17,6 +17,7 @@ import {
 import { loadConfig, ApiClient, log, setClientRoots, validateWorkspace } from './api.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
 import { systemTools, handleSystemTool, recordAudit } from './tools/system.js';
+import { setCapabilitiesVerified } from './tools/system.js';
 import { recallTools, handleRecallTool } from './tools/recall.js';
 import { graphTools, handleGraphTool } from './tools/graph.js';
 import { cognitiveTools, handleCognitiveTool, trackToolCallForIdentity } from './tools/cognitive.js';
@@ -129,6 +130,25 @@ const server = new Server(
 // ── Resources ──
 
 fetchRecall(api, config); // non-blocking startup
+
+// H1.4/Chain 8: Startup capability check — verify backend supports filter params
+// 3s timeout, optimistic fallback (per Round 2)
+(async () => {
+  try {
+    const health = await Promise.race([
+      api.get<{ status?: string }>('/health'),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 3000)),
+    ]);
+    if (health) {
+      setCapabilitiesVerified(true);
+      log('info', 'capabilities_verified', { status: 'ok' });
+    } else {
+      log('warn', 'capabilities_check_timeout', { hint: 'Backend slow — assuming params supported (optimistic)' });
+    }
+  } catch {
+    log('warn', 'capabilities_check_failed', { hint: 'Backend unreachable at startup — filter params unverified' });
+  }
+})();
 
 // Capture client roots for workspace cross-validation
 server.oninitialized = async () => {

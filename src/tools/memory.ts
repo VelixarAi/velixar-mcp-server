@@ -12,6 +12,19 @@ import { validateStoreResponse, validateSearchResponse, validateListResponse, va
 // H1.5: Track warned params to avoid cluttering every response
 const _warnedParams = new Set<string>();
 
+// H6.1/Chain 9: _baseFilter — single source of truth for building search/list query params
+// All retrieval handlers must use this instead of constructing URLSearchParams directly.
+export function _baseFilter(config: ApiConfig, args: Record<string, unknown>): URLSearchParams {
+  const params = new URLSearchParams({ user_id: config.userId });
+  if (args.limit) params.set('limit', String(args.limit));
+  if (args.tags) params.set('tags', (args.tags as string[]).join(','));
+  if (args.before) params.set('before', args.before as string);
+  if (args.after) params.set('after', args.after as string);
+  if (args.tier !== undefined) params.set('tier', String(args.tier));
+  if (args.sort) params.set('sort', args.sort as string);
+  return params;
+}
+
 export const memoryTools: Tool[] = [
   {
     name: 'velixar_store',
@@ -158,12 +171,8 @@ export async function handleMemoryTool(
   }
 
   if (name === 'velixar_search') {
-    const params = new URLSearchParams({ q: args.query as string, user_id: config.userId });
-    if (args.limit) params.set('limit', String(args.limit));
-    if (args.tags) params.set('tags', (args.tags as string[]).join(','));
-    if (args.before) params.set('before', args.before as string);
-    if (args.after) params.set('after', args.after as string);
-    if (args.tier !== undefined) params.set('tier', String(args.tier));
+    const params = _baseFilter(config, args);
+    params.set('q', args.query as string);
     const raw = await api.get<unknown>(`/memory/search?${params}`, true);
     const result = validateSearchResponse(raw, '/memory/search');
     let items = result.memories.map(m => {
@@ -195,14 +204,8 @@ export async function handleMemoryTool(
   }
 
   if (name === 'velixar_list') {
-    const params = new URLSearchParams({ user_id: config.userId });
-    if (args.limit) params.set('limit', String(args.limit));
+    const params = _baseFilter(config, args);
     if (args.cursor) params.set('cursor', args.cursor as string);
-    if (args.tags) params.set('tags', (args.tags as string[]).join(','));
-    if (args.before) params.set('before', args.before as string);
-    if (args.after) params.set('after', args.after as string);
-    if (args.tier !== undefined) params.set('tier', String(args.tier));
-    if (args.sort) params.set('sort', args.sort as string);
     const raw = await api.get<unknown>(`/memory/list?${params}`, true);
     const result = validateListResponse(raw, '/memory/list');
     let items = result.memories.map(m => {

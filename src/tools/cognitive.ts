@@ -240,9 +240,9 @@ export async function handleCognitiveTool(
       if (!contradictionId || !resolution) throw new Error('contradiction_id and resolution required for resolve action');
 
       try {
-        await api.post('/exocortex/contradictions/resolve', {
-          contradiction_id: contradictionId,
+        await api.post(`/exocortex/contradictions/${contradictionId}`, {
           resolution,
+          status: 'resolved',
         });
         return {
           text: JSON.stringify(wrapResponse(
