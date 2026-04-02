@@ -28,6 +28,15 @@
     "velixar_capabilities": [],
     "velixar_export": [],
     "velixar_import": [],
-    "velixar_security": []
+    "velixar_upload": [],
+    "velixar_security": [],
+    "velixar_discover_data": [],
+    "velixar_list_sources": [],
+    "velixar_query_source": [],
+    "velixar_multi_search": [],
+    "velixar_search_neighborhood": [],
+    "velixar_coverage_check": [],
+    "velixar_prepare_context": [],
+    "velixar_refine_context": []
   }
 }

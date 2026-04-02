@@ -16,11 +16,14 @@ import {
 
 import { loadConfig, ApiClient, log, setClientRoots, validateWorkspace } from './api.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
-import { systemTools, handleSystemTool } from './tools/system.js';
+import { systemTools, handleSystemTool, recordAudit } from './tools/system.js';
 import { recallTools, handleRecallTool } from './tools/recall.js';
 import { graphTools, handleGraphTool } from './tools/graph.js';
 import { cognitiveTools, handleCognitiveTool, trackToolCallForIdentity } from './tools/cognitive.js';
 import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
+import { liveDataTools, handleLiveDataTool } from './tools/livedata.js';
+import { retrievalTools, handleRetrievalTool } from './tools/retrieval.js';
+import { constructionTools, handleConstructionTool } from './tools/construction.js';
 import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity, refreshRelevantMemories, markToolCall, isRelevantStale, getConstitutionFallback } from './resources.js';
 import { getPromptList, getPrompt, allPrompts } from './prompts.js';
 
@@ -30,18 +33,26 @@ let _toolCallCount = 0;
 let _recentToolCalls: string[] = []; // last 5 tool names for pattern detection
 let _promptReadCount = 0;
 
+// Search-like tools — any of these count as "did a search" for anti-pattern purposes
+const SEARCH_TOOLS = new Set([
+  'velixar_search', 'velixar_batch_search', 'velixar_multi_search',
+  'velixar_context', 'velixar_prepare_context', 'velixar_coverage_check',
+]);
+
 function detectAntiPattern(toolName: string): string | null {
   const recent = _recentToolCalls;
-  // Sequential searches that should be batched
-  if (toolName === 'velixar_search' && recent.length >= 1 && recent[recent.length - 1] === 'velixar_search') {
-    return 'Tip: use velixar_batch_search for multiple queries in one call.';
+  const last = recent.length >= 1 ? recent[recent.length - 1] : null;
+
+  // Sequential single searches that should be batched or use multi_search
+  if (toolName === 'velixar_search' && last === 'velixar_search') {
+    return 'Tip: use velixar_batch_search for independent queries, or velixar_multi_search for merged results with deduplication.';
   }
-  // Search right after context with no other tool in between
-  if (toolName === 'velixar_search' && recent.length >= 1 && recent[recent.length - 1] === 'velixar_context') {
+  // Single search right after context — context already searched
+  if (toolName === 'velixar_search' && last === 'velixar_context') {
     return 'Note: velixar_context already includes KG-boosted search results. Only use velixar_search if you need a different query.';
   }
   // Store without prior search (check last 3 calls)
-  if (toolName === 'velixar_store' && !recent.slice(-3).some(t => t === 'velixar_search' || t === 'velixar_context' || t === 'velixar_batch_search')) {
+  if (toolName === 'velixar_store' && !recent.slice(-3).some(t => SEARCH_TOOLS.has(t))) {
     return 'Warning: search before storing to avoid duplicates.';
   }
   return null;
@@ -67,8 +78,32 @@ const detectedHost = process.env.CURSOR_SESSION_ID ? 'cursor'
   : 'unknown';
 if (detectedHost !== 'unknown') log('info', 'host_detected', { host: detectedHost });
 
-const allTools = [...memoryTools, ...recallTools, ...graphTools, ...cognitiveTools, ...lifecycleTools, ...systemTools];
+const allTools = [...memoryTools, ...recallTools, ...graphTools, ...cognitiveTools, ...lifecycleTools, ...liveDataTools, ...retrievalTools, ...constructionTools, ...systemTools];
 const allToolNames = allTools.map(t => t.name);
+
+// ── Build 7.2: Tool Tier System ──
+// H5.1: Tier 2 is default. H5.2: capabilities always included. H5.3: Tier 1 = 9 core tools.
+// Static at startup only (dynamic tiers deferred per 7 Whys Round 2 Chain 13).
+const TOOL_TIERS: Record<number, Set<string>> = {
+  1: new Set([
+    'velixar_context', 'velixar_search', 'velixar_store', 'velixar_list',
+    'velixar_update', 'velixar_delete', 'velixar_session_resume', 'velixar_health', 'velixar_capabilities',
+  ]),
+  2: new Set([
+    // Tier 1 + these
+    'velixar_context', 'velixar_search', 'velixar_store', 'velixar_list',
+    'velixar_update', 'velixar_delete', 'velixar_session_resume', 'velixar_health', 'velixar_capabilities',
+    'velixar_multi_search', 'velixar_prepare_context', 'velixar_distill', 'velixar_timeline',
+    'velixar_contradictions', 'velixar_patterns', 'velixar_graph_traverse', 'velixar_session_save',
+    'velixar_session_recall', 'velixar_coverage_check', 'velixar_export', 'velixar_import', 'velixar_identity',
+  ]),
+  // Tier 3 = all tools (no filtering)
+};
+
+const toolTier = parseInt(process.env.VELIXAR_TOOL_TIER || '3', 10);
+const tierFilter = TOOL_TIERS[toolTier];
+const exposedTools = tierFilter ? allTools.filter(t => tierFilter.has(t.name)) : allTools;
+if (tierFilter) log('info', 'tool_tier_active', { tier: toolTier, exposed: exposedTools.length, total: allTools.length });
 
 const toolHandlers: Array<{ names: Set<string>; handler: typeof handleMemoryTool }> = [
   { names: new Set(memoryTools.map(t => t.name)), handler: handleMemoryTool },
@@ -76,13 +111,18 @@ const toolHandlers: Array<{ names: Set<string>; handler: typeof handleMemoryTool
   { names: new Set(graphTools.map(t => t.name)), handler: handleGraphTool },
   { names: new Set(cognitiveTools.map(t => t.name)), handler: handleCognitiveTool },
   { names: new Set(lifecycleTools.map(t => t.name)), handler: handleLifecycleTool },
+  { names: new Set(liveDataTools.map(t => t.name)), handler: handleLiveDataTool },
+  { names: new Set(retrievalTools.map(t => t.name).concat('velixar_batch_search')), handler: handleRetrievalTool },
+  { names: new Set(constructionTools.map(t => t.name)), handler: handleConstructionTool },
 ];
 const systemToolNames = new Set(systemTools.map(t => t.name));
 
 // ── Server ──
+// H7.5: Server name configurable for white-label partners
+const serverName = process.env.VELIXAR_MCP_SERVER_NAME || 'velixar-mcp-server';
 
 const server = new Server(
-  { name: 'velixar-mcp-server', version: '1.1.0' },
+  { name: serverName, version: '1.1.0' },
   { capabilities: { tools: {}, resources: {}, prompts: {} } },
 );
 
@@ -117,7 +157,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (req) => {
 
 // ── Tools ──
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: allTools }));
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: exposedTools }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
@@ -143,6 +183,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     log('info', 'tool_call', { tool: name, duration_ms: Date.now() - start, error: false });
+
+    // Build 7.1: Record audit entry
+    recordAudit(name, Date.now() - start, args as Record<string, unknown>, !result.isError);
 
     // AH-5: Track tool call sequence for anti-pattern detection
     trackToolCall(name);
@@ -191,7 +234,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Track tool calls for resource staleness; refresh after mutations
     markToolCall();
     trackToolCallForIdentity();
-    const mutationTools = new Set(['velixar_store', 'velixar_update', 'velixar_delete', 'velixar_distill']);
+    const mutationTools = new Set([
+      'velixar_store', 'velixar_update', 'velixar_delete', 'velixar_distill',
+      'velixar_batch_store', 'velixar_import', 'velixar_consolidate', 'velixar_retag',
+    ]);
     if (mutationTools.has(name) || isRelevantStale()) {
       refreshRelevantMemories(api, config); // non-blocking
     }
@@ -203,8 +249,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     log('error', 'tool_error', { tool: name, duration_ms: Date.now() - start, error: msg });
-    // Alert-level for critical failures
-    if (name === 'velixar_store' || name === 'velixar_batch_store' || name === 'velixar_import' || name === 'velixar_upload') {
+    // Build 7.1: Record failed audit
+    recordAudit(name, Date.now() - start, args as Record<string, unknown>, false);
+    // Alert-level for critical failures — any tool that writes memory state
+    const criticalWriteTools = new Set([
+      'velixar_store', 'velixar_batch_store', 'velixar_import', 'velixar_upload',
+      'velixar_consolidate', 'velixar_distill', 'velixar_update', 'velixar_delete',
+    ]);
+    if (criticalWriteTools.has(name)) {
       log('error', 'alert:memory_store_failure', { tool: name, error: msg });
     }
     return {

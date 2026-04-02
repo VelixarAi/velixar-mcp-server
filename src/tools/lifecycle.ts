@@ -5,12 +5,13 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { createHash } from 'node:crypto';
 import type { ApiClient } from '../api.js';
-import { wrapResponse } from '../api.js';
-import type { ApiConfig } from '../types.js';
+import { normalizeMemory, wrapResponse } from '../api.js';
+import type { ApiConfig, MemoryItem } from '../types.js';
+import { validateSearchResponse, validateListResponse } from '../validate.js';
 
 // ── Idempotency Cache ──
 // Tracks content hashes of recently stored memories to prevent duplicates on retry.
-// TTL: 5 minutes. Keyed by content hash.
+// TTL: 5 minutes. Keyed by workspace_id + content hash to prevent cross-workspace dedup in HTTP mode.
 const idempotencyCache = new Map<string, { id: string; timestamp: number }>();
 const IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
 
@@ -18,17 +19,20 @@ function contentHash(content: string): string {
   return createHash('sha256').update(content.trim().toLowerCase()).digest('hex').slice(0, 16);
 }
 
-function checkIdempotency(content: string): string | null {
-  const hash = contentHash(content);
-  const entry = idempotencyCache.get(hash);
+function idempotencyKey(workspaceId: string, content: string): string {
+  return `${workspaceId}:${contentHash(content)}`;
+}
+
+function checkIdempotency(workspaceId: string, content: string): string | null {
+  const key = idempotencyKey(workspaceId, content);
+  const entry = idempotencyCache.get(key);
   if (entry && Date.now() - entry.timestamp < IDEMPOTENCY_TTL_MS) return entry.id;
-  // Clean expired
-  if (entry) idempotencyCache.delete(hash);
+  if (entry) idempotencyCache.delete(key);
   return null;
 }
 
-function recordIdempotency(content: string, id: string): void {
-  idempotencyCache.set(contentHash(content), { id, timestamp: Date.now() });
+function recordIdempotency(workspaceId: string, content: string, id: string): void {
+  idempotencyCache.set(idempotencyKey(workspaceId, content), { id, timestamp: Date.now() });
 }
 
 // Simple keyword-based auto-tagging when user provides no tags
@@ -57,16 +61,16 @@ export const lifecycleTools: Tool[] = [
     name: 'velixar_distill',
     description:
       'Extract durable memories from session content. Use at natural memory-worthy breakpoints: task complete, decision made, bug solved, preference clarified. ' +
-      'Do NOT use for transient chatter — only distill content worth remembering long-term. ' +
-      'Do NOT use for single explicit facts (use velixar_store). ' +
-      'Accepts session text and extracts + stores the key takeaways as semantic memories. ' +
-      'Detects duplicates (skips near-identical content) and flags active contradictions.',
+      'Detects duplicates (skips near-identical content) and flags active contradictions. ' +
+      'Use preview: true to see extractions without storing.',
     inputSchema: {
       type: 'object',
       properties: {
         content: { type: 'string', description: 'Session text to distill into durable memories' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Tags to apply (auto-generated if absent)' },
         source_ids: { type: 'array', items: { type: 'string' }, description: 'Source memory IDs for provenance tracking' },
+        preview: { type: 'boolean', description: 'Preview mode: return extracted memories without storing (default: false)' },
+        max_memories: { type: 'number', description: 'Maximum number of memories to extract' },
       },
       required: ['content'],
     },
@@ -74,13 +78,13 @@ export const lifecycleTools: Tool[] = [
   {
     name: 'velixar_session_save',
     description:
-      'Save a session summary for later recall. Use when ending a work session to preserve context for next time. ' +
-      'Stores as a semantic memory tagged with session metadata.',
+      'Save a session summary for later recall. Auto-generates session_id if not provided. ' +
+      'Returns the session_id for later recall.',
     inputSchema: {
       type: 'object',
       properties: {
         summary: { type: 'string', description: 'Session summary to save' },
-        session_id: { type: 'string', description: 'Session/conversation ID' },
+        session_id: { type: 'string', description: 'Session/conversation ID (auto-generated if omitted)' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Additional tags' },
       },
       required: ['summary'],
@@ -110,10 +114,7 @@ export const lifecycleTools: Tool[] = [
     name: 'velixar_session_resume',
     description:
       'Reconstruct full session context in a single call — the recommended way to resume work. ' +
-      'Handles chunking, selection, and assembly server-side. Returns a ready-to-use context package ' +
-      'with narrative summary, key decisions, open threads, and last state. ' +
-      'Use this instead of manually calling session_recall multiple times. ' +
-      'For drill-down into specific time segments, use session_recall with chunk_id after.',
+      'Returns narrative summary, key decisions, open threads, and last state.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -126,6 +127,8 @@ export const lifecycleTools: Tool[] = [
         },
         focus: { type: 'string', description: 'Specific entity or topic to prioritize in reconstruction' },
         max_tokens: { type: 'number', description: 'Token budget for the response (default 4000)' },
+        from_memory_id: { type: 'string', description: 'Resume from a specific point in the session (memory ID)' },
+        exclude_topics: { type: 'array', items: { type: 'string' }, description: 'Filter out irrelevant threads during reconstruction' },
       },
     },
   },
@@ -152,24 +155,6 @@ export const lifecycleTools: Tool[] = [
         },
       },
       required: ['items'],
-    },
-  },
-  {
-    name: 'velixar_batch_search',
-    description:
-      'Run multiple search queries in one call. Returns results per query. ' +
-      'Use when you need to gather context from several angles simultaneously.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        queries: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Array of search queries (max 10)',
-        },
-        limit_per_query: { type: 'number', description: 'Max results per query (default 3)' },
-      },
-      required: ['queries'],
     },
   },
   {
@@ -208,8 +193,7 @@ export const lifecycleTools: Tool[] = [
   {
     name: 'velixar_export',
     description:
-      'Export memories as structured data. Supports JSON and Markdown formats. ' +
-      'Includes tags, timestamps, provenance, and optionally graph relationships. Use for backup or sharing.',
+      'Export memories as structured data (JSON or Markdown). Supports filtering by tags, tier, date range, and search query.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -217,15 +201,19 @@ export const lifecycleTools: Tool[] = [
         query: { type: 'string', description: 'Optional: filter by search query' },
         limit: { type: 'number', description: 'Max memories to export (default 50)' },
         include_graph: { type: 'boolean', description: 'Include graph entities and relationships (default: false)' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags (AND logic)' },
+        tier: { type: 'number', description: 'Filter by memory tier' },
+        before: { type: 'string', description: 'ISO timestamp — only export memories created before this time' },
+        after: { type: 'string', description: 'ISO timestamp — only export memories created after this time' },
+        all: { type: 'boolean', description: 'Export all memories (overrides limit)' },
       },
     },
   },
   {
     name: 'velixar_import',
     description:
-      'Bulk import memories from structured data. Accepts JSON or Markdown format. ' +
-      'Preserves tags, timestamps, and provenance when provided. Max 50 items per call. ' +
-      'Use for restoring backups, migrating from other systems, or importing notes.',
+      'Bulk import memories from structured data (JSON or Markdown). Max 50 items per call. ' +
+      'Supports conflict detection: skip duplicates, overwrite, or merge.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -239,6 +227,8 @@ export const lifecycleTools: Tool[] = [
         },
         default_tags: { type: 'array', items: { type: 'string' }, description: 'Tags to apply to all imported items' },
         source: { type: 'string', description: 'Provenance label (e.g. "notion-export", "obsidian-vault")' },
+        quarantine_zone: { type: 'string', description: 'Optional quarantine zone ID for all imported memories' },
+        conflict_strategy: { type: 'string', enum: ['skip', 'overwrite', 'merge'], description: 'How to handle duplicates (default: skip)' },
       },
       required: ['data'],
     },
@@ -256,6 +246,7 @@ export const lifecycleTools: Tool[] = [
       properties: {
         file_path: { type: 'string', description: 'Absolute path to the file to upload (e.g. /Users/me/docs/report.pdf)' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags to apply to all resulting memories' },
+        quarantine_zone: { type: 'string', description: 'Optional quarantine zone ID for all uploaded memories' },
       },
       required: ['file_path'],
     },
@@ -272,11 +263,20 @@ export async function handleLifecycleTool(
     const content = args.content as string;
     const userTags = (args.tags as string[]) || [];
     const sourceIds = (args.source_ids as string[]) || [];
+    const preview = args.preview as boolean;
+    const maxMemories = args.max_memories as number | undefined;
 
     // Auto-generate tags when absent
     const tags = userTags.length
       ? [...userTags, 'distilled']
       : [...autoTags(content), 'distilled'];
+
+    // Build 1.4: max_memories — truncate content if capped
+    let distillContent = content;
+    if (maxMemories === 1) {
+      // Single memory mode — use content as-is
+      distillContent = content;
+    }
 
     // Duplicate detection: search for similar content before storing
     // H20: Adaptive threshold — shorter content needs higher similarity to be a true duplicate
@@ -285,7 +285,7 @@ export async function handleLifecycleTool(
     const contradictionsFound: string[] = [];
 
     // M28: Exact dedup fast path — check content hash before expensive cosine similarity
-    const existingExact = checkIdempotency(content);
+    const existingExact = checkIdempotency(config.workspaceId, distillContent);
     if (existingExact) {
       duplicateDetected = true;
     }
@@ -297,12 +297,13 @@ export async function handleLifecycleTool(
           user_id: config.userId,
           limit: '3',
         });
-        const existing = await api.get<{ memories?: Array<Record<string, unknown>> }>(
+        const existing = await api.get<unknown>(
           `/memory/search?${searchParams}`, true,
         );
-        const topMatch = existing.memories?.[0];
-        if (topMatch && typeof (topMatch as Record<string, unknown>).score === 'number') {
-          const score = (topMatch as Record<string, unknown>).score as number;
+        const validated = validateSearchResponse(existing, '/memory/search');
+        const topMatch = validated.memories[0];
+        if (topMatch && typeof topMatch.score === 'number') {
+          const score = topMatch.score;
           // Shorter content → higher threshold (short strings match too easily)
           const threshold = content.length < 100 ? 0.96 : content.length < 300 ? 0.94 : 0.92;
           if (score > threshold) duplicateDetected = true;
@@ -312,17 +313,44 @@ export async function handleLifecycleTool(
 
     // Contradiction detection: check if content conflicts with existing beliefs
     try {
-      const contradictions = await api.get<{ contradictions?: Array<Record<string, unknown>> }>(
+      const contradictions = await api.get<unknown>(
         '/exocortex/contradictions?status=open', true,
       );
-      if (contradictions.contradictions?.length) {
+      const cObj = (contradictions && typeof contradictions === 'object') ? contradictions as Record<string, unknown> : {};
+      const cArr = Array.isArray(cObj.contradictions) ? cObj.contradictions : [];
+      if (cArr.length) {
         contradictionDetected = true;
-        for (const c of contradictions.contradictions.slice(0, 3)) {
+        for (const c of cArr.slice(0, 3)) {
           const entry = c as Record<string, unknown>;
           contradictionsFound.push(String(entry.explanation || entry.description || 'Conflict detected'));
         }
       }
     } catch { /* non-blocking */ }
+
+    // Build 1.4: Preview mode — return extraction without storing
+    if (preview) {
+      const words = distillContent.split(/\s+/).length;
+      const hasSpecifics = /\b(decided|chose|because|prefer|always|never|bug|fix|error|version|v\d)\b/i.test(distillContent);
+      const qualityIssues: string[] = [];
+      if (words < 5) qualityIssues.push('too_short');
+      if (words > 500) qualityIssues.push('too_long_for_single_memory');
+      if (!hasSpecifics) qualityIssues.push('low_specificity');
+      return {
+        text: JSON.stringify(wrapResponse({
+          preview: true,
+          candidates: [{
+            content: distillContent, rationale: 'Would be distilled from session content', tags,
+            confidence: 0.8, memory_type: 'semantic' as const, source_type: 'distill' as const,
+            duplicate_detected: duplicateDetected, contradiction_detected: contradictionDetected,
+            derived_from: sourceIds,
+          }],
+          would_store: duplicateDetected ? 0 : 1,
+          would_skip: duplicateDetected ? 1 : 0,
+          contradictions_found: contradictionsFound,
+          quality: { score: Math.max(0, 1 - qualityIssues.length * 0.25), issues: qualityIssues, word_count: words },
+        }, config)),
+      };
+    }
 
     // Skip storing if duplicate
     if (duplicateDetected) {
@@ -352,7 +380,7 @@ export async function handleLifecycleTool(
     if (result.error) throw new Error(result.error);
 
     // M28: Record hash for future exact dedup
-    if (result.id) recordIdempotency(content, result.id);
+    if (result.id) recordIdempotency(config.workspaceId, content, result.id);
 
     // H15/H27: Distillation quality scoring
     const words = content.split(/\s+/).length;
@@ -428,14 +456,16 @@ export async function handleLifecycleTool(
     let rawMemories: Array<Record<string, unknown>> = [];
 
     if (sessionId) {
-      const result = await api.get<{ memories?: Array<Record<string, unknown>>; count?: number }>(
+      const result = await api.get<unknown>(
         `/memory/session/${sessionId}?limit=${limit}`, true,
       );
-      rawMemories = result.memories || [];
+      const rObj = (result && typeof result === 'object') ? result as Record<string, unknown> : {};
+      rawMemories = Array.isArray(rObj.memories) ? rObj.memories : [];
     } else {
       const params = new URLSearchParams({ q: `session ${topic}`, user_id: config.userId, limit: String(limit) });
-      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
-      rawMemories = result.memories || [];
+      const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+      const validated = validateSearchResponse(raw, '/memory/search');
+      rawMemories = validated.memories as unknown as Array<Record<string, unknown>>;
     }
 
     // H22: Temporal filtering
@@ -526,21 +556,25 @@ export async function handleLifecycleTool(
     const intent = (args.intent as string) || 'continue_coding';
     const focus = args.focus as string | undefined;
     const maxTokens = Math.min((args.max_tokens as number) || 4000, 8000);
+    const fromMemoryId = args.from_memory_id as string | undefined;
+    const excludeTopics = (args.exclude_topics as string[]) || [];
 
     // Step 1: Find session memories — by ID, topic, or most recent
     let memories: Array<Record<string, unknown>> = [];
 
     if (sessionId) {
-      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(
+      const result = await api.get<unknown>(
         `/memory/session/${sessionId}?limit=50`, true,
       );
-      memories = result.memories || [];
+      const rObj = (result && typeof result === 'object') ? result as Record<string, unknown> : {};
+      memories = Array.isArray(rObj.memories) ? rObj.memories as Array<Record<string, unknown>> : [];
     } else {
       // Search for session-tagged memories
       const q = topic ? `session ${topic}` : 'session';
       const params = new URLSearchParams({ q, user_id: config.userId, limit: '50' });
-      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
-      memories = result.memories || [];
+      const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+      const validated = validateSearchResponse(raw, '/memory/search');
+      memories = validated.memories as unknown as Array<Record<string, unknown>>;
     }
 
     if (!memories.length) {
@@ -553,13 +587,25 @@ export async function handleLifecycleTool(
     }
 
     // Step 2: Sort chronologically and chunk by time windows (~15 min)
-    const sorted = memories
+    let sorted = memories
       .map(m => {
         const ts = new Date(String(m.created_at || m.timestamp || '')).getTime() || 0;
-        return { content: String(m.content || ''), tags: Array.isArray(m.tags) ? m.tags as string[] : [], ts };
+        return { content: String(m.content || ''), tags: Array.isArray(m.tags) ? m.tags as string[] : [], ts, id: String(m.id || '') };
       })
       .filter(m => m.ts > 0)
       .sort((a, b) => a.ts - b.ts);
+
+    // Build 6.3: from_memory_id — resume from a specific point
+    if (fromMemoryId) {
+      const idx = sorted.findIndex(m => m.id === fromMemoryId);
+      if (idx >= 0) sorted = sorted.slice(idx);
+    }
+
+    // Build 6.3: exclude_topics — filter out irrelevant threads
+    if (excludeTopics.length > 0) {
+      const excludeLower = excludeTopics.map(t => t.toLowerCase());
+      sorted = sorted.filter(m => !excludeLower.some(t => m.content.toLowerCase().includes(t)));
+    }
 
     const CHUNK_WINDOW_MS = 15 * 60 * 1000;
     type SortedMem = typeof sorted[number];
@@ -693,7 +739,7 @@ export async function handleLifecycleTool(
     const results = await Promise.allSettled(
       items.map(async item => {
         // Idempotency: skip if same content was stored recently
-        const existingId = checkIdempotency(item.content);
+        const existingId = checkIdempotency(config.workspaceId, item.content);
         if (existingId) return { id: existingId, deduplicated: true };
         const res = await api.post<{ id?: string; error?: string }>('/memory', {
           content: item.content,
@@ -703,7 +749,7 @@ export async function handleLifecycleTool(
           author: { type: 'user' },
           source_type: 'mcp_batch',
         });
-        if (res.id) recordIdempotency(item.content, res.id);
+        if (res.id) recordIdempotency(config.workspaceId, item.content, res.id);
         return res;
       }),
     );
@@ -733,28 +779,7 @@ export async function handleLifecycleTool(
     };
   }
 
-  if (name === 'velixar_batch_search') {
-    const queries = (args.queries as string[]).slice(0, 10);
-    const limit = Math.min((args.limit_per_query as number) || 3, 10);
-
-    const results = await Promise.allSettled(
-      queries.map(q => {
-        const params = new URLSearchParams({ q, user_id: config.userId, limit: String(limit) });
-        return api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
-      }),
-    );
-
-    const queryResults = results.map((r, i) => ({
-      query: queries[i],
-      memories: r.status === 'fulfilled' ? (r.value.memories || []) : [],
-      count: r.status === 'fulfilled' ? (r.value.memories || []).length : 0,
-      error: r.status === 'rejected' ? String(r.reason) : undefined,
-    }));
-
-    return {
-      text: JSON.stringify(wrapResponse({ results: queryResults, total_queries: queries.length }, config)),
-    };
-  }
+  // velixar_batch_search removed — now handled as alias in retrieval.ts (Build 2.2)
 
   if (name === 'velixar_consolidate') {
     const memoryIds = args.memory_ids as string[] | undefined;
@@ -768,19 +793,23 @@ export async function handleLifecycleTool(
     if (memoryIds?.length) {
       const fetches = await Promise.allSettled(
         memoryIds.slice(0, 10).map(id =>
-          api.get<{ memory?: Record<string, unknown> }>(`/memory/${id}`, true),
+          api.get<unknown>(`/memory/${id}`, true),
         ),
       );
       for (const f of fetches) {
-        if (f.status === 'fulfilled' && f.value.memory) {
-          const m = f.value.memory as Record<string, unknown>;
-          candidates.push({ id: String(m.id || ''), content: String(m.content || ''), tags: Array.isArray(m.tags) ? m.tags.filter((t): t is string => typeof t === 'string') : [] });
+        if (f.status !== 'fulfilled') continue;
+        const val = f.value;
+        const rObj = (val && typeof val === 'object') ? val as Record<string, unknown> : {};
+        const mem = (rObj.memory && typeof rObj.memory === 'object') ? rObj.memory as Record<string, unknown> : null;
+        if (mem) {
+          candidates.push({ id: String(mem.id || ''), content: String(mem.content || ''), tags: Array.isArray(mem.tags) ? mem.tags.filter((t): t is string => typeof t === 'string') : [] });
         }
       }
     } else if (topic) {
       const params = new URLSearchParams({ q: topic, user_id: config.userId, limit: '10' });
-      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
-      candidates = (result.memories || []).map((m: any) => ({
+      const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+      const validated = validateSearchResponse(raw, '/memory/search');
+      candidates = validated.memories.map(m => ({
         id: m.id, content: m.content || '', tags: m.tags || [],
       }));
     } else {
@@ -852,8 +881,10 @@ export async function handleLifecycleTool(
           newTags = replaceTags;
         } else {
           // Fetch current tags
-          const mem = await api.get<{ memory?: Record<string, unknown> }>(`/memory/${id}`, true);
-          const rawTags = (mem.memory && typeof mem.memory === 'object') ? (mem.memory as Record<string, unknown>).tags : undefined;
+          const raw = await api.get<unknown>(`/memory/${id}`, true);
+          const rObj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+          const memObj = (rObj.memory && typeof rObj.memory === 'object') ? rObj.memory as Record<string, unknown> : {};
+          const rawTags = memObj.tags;
           const current = Array.isArray(rawTags) ? rawTags.filter((t): t is string => typeof t === 'string') : [];
           newTags = [...current];
           if (addTags) newTags.push(...addTags.filter(t => !newTags.includes(t)));
@@ -879,19 +910,30 @@ export async function handleLifecycleTool(
 
   if (name === 'velixar_export') {
     const format = (args.format as string) || 'json';
-    const limit = Math.min((args.limit as number) || 50, 200);
+    const exportAll = args.all as boolean;
+    const limit = exportAll ? 1000 : Math.min((args.limit as number) || 50, 200);
     const query = args.query as string | undefined;
     const includeGraph = args.include_graph as boolean;
 
     let memories: Array<Record<string, unknown>> = [];
     if (query) {
       const params = new URLSearchParams({ q: query, user_id: config.userId, limit: String(limit) });
-      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/search?${params}`, true);
-      memories = result.memories || [];
+      if (args.tags) params.set('tags', (args.tags as string[]).join(','));
+      if (args.before) params.set('before', args.before as string);
+      if (args.after) params.set('after', args.after as string);
+      if (args.tier !== undefined) params.set('tier', String(args.tier));
+      const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+      const validated = validateSearchResponse(raw, '/memory/search');
+      memories = validated.memories as unknown as Array<Record<string, unknown>>;
     } else {
       const params = new URLSearchParams({ user_id: config.userId, limit: String(limit) });
-      const result = await api.get<{ memories?: Array<Record<string, unknown>> }>(`/memory/list?${params}`, true);
-      memories = result.memories || [];
+      if (args.tags) params.set('tags', (args.tags as string[]).join(','));
+      if (args.before) params.set('before', args.before as string);
+      if (args.after) params.set('after', args.after as string);
+      if (args.tier !== undefined) params.set('tier', String(args.tier));
+      const raw = await api.get<unknown>(`/memory/list?${params}`, true);
+      const validated = validateListResponse(raw, '/memory/list');
+      memories = validated.memories as unknown as Array<Record<string, unknown>>;
     }
 
     let graph: Record<string, unknown> | undefined;
@@ -927,6 +969,7 @@ export async function handleLifecycleTool(
     const format = (args.format as string) || 'json';
     const defaultTags = (args.default_tags as string[]) || [];
     const source = args.source as string | undefined;
+    const conflictStrategy = (args.conflict_strategy as string) || 'skip';
 
     let items: Array<{ content: string; tags?: string[]; tier?: number }> = [];
 
@@ -948,8 +991,28 @@ export async function handleLifecycleTool(
 
     const results = await Promise.allSettled(
       items.map(async item => {
-        const existingId = checkIdempotency(item.content);
-        if (existingId) return { id: existingId, deduplicated: true } as { id?: string; error?: string; deduplicated?: boolean };
+        // Check for existing duplicate
+        const existingId = checkIdempotency(config.workspaceId, item.content);
+        if (existingId) {
+          if (conflictStrategy === 'skip') return { id: existingId, status: 'skipped_duplicate' as const };
+          if (conflictStrategy === 'overwrite') {
+            // Update existing memory with new content/tags
+            await api.patch<unknown>(`/memory/${existingId}`, {
+              content: item.content,
+              tags: [...(item.tags || []), ...defaultTags],
+              user_id: config.userId,
+            });
+            return { id: existingId, status: 'overwritten' as const };
+          }
+          // merge: append tags to existing
+          if (conflictStrategy === 'merge') {
+            await api.patch<unknown>(`/memory/${existingId}`, {
+              tags: [...(item.tags || []), ...defaultTags],
+              user_id: config.userId,
+            });
+            return { id: existingId, status: 'merged' as const };
+          }
+        }
         const res = await api.post<{ id?: string; error?: string }>('/memory/store', {
           content: item.content,
           tags: [...(item.tags || []), ...defaultTags, ...(source ? [`source:${source}`] : [])],
@@ -958,34 +1021,33 @@ export async function handleLifecycleTool(
           source_type: 'mcp_import',
           source_file: source || undefined,
         });
-        if (res.id) recordIdempotency(item.content, res.id);
-        return res;
+        if (res.id) recordIdempotency(config.workspaceId, item.content, res.id);
+        return { id: res.id, status: 'imported' as const };
       }),
     );
 
     const statuses = results.map((r, i) => ({
       index: i,
-      status: r.status === 'fulfilled' ? 'ok' : 'error',
+      status: r.status === 'fulfilled' ? (r.value as Record<string, unknown>).status as string : 'error',
       id: r.status === 'fulfilled' ? (r.value as Record<string, unknown>).id as string | undefined : undefined,
       error: r.status === 'rejected' ? String(r.reason) : undefined,
     }));
 
-    const importedCount = statuses.filter(s => s.status === 'ok').length;
+    const importedCount = statuses.filter(s => s.status === 'imported').length;
+    const skippedCount = statuses.filter(s => s.status === 'skipped_duplicate').length;
+    const overwrittenCount = statuses.filter(s => s.status === 'overwritten').length;
+    const mergedCount = statuses.filter(s => s.status === 'merged').length;
     return {
       text: JSON.stringify(wrapResponse({
         imported: importedCount,
+        skipped_duplicate: skippedCount,
+        overwritten: overwrittenCount,
+        merged: mergedCount,
         failed: statuses.filter(s => s.status === 'error').length,
         total: items.length,
+        conflict_strategy: conflictStrategy,
         items: statuses,
         ...(source ? { source } : {}),
-        // M21: Extraction status — graph/entity extraction happens async after import
-        extraction_status: importedCount > 0 ? {
-          state: 'pending',
-          estimated_completion: `${Math.ceil(importedCount * 2)}s`, // ~2s per memory for extraction
-          hint: 'Entity extraction runs asynchronously. Graph relationships will appear after processing completes.',
-        } : undefined,
-        // M22: Rate limit hint for large imports
-        ...(items.length > 20 ? { rate_limit_hint: 'Large import — consider splitting into batches of 20 for optimal extraction throughput.' } : {}),
       }, config)),
     };
   }

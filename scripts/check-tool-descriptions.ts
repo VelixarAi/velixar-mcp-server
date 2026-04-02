@@ -43,11 +43,30 @@ const AMBIGUOUS_PAIRS: Array<{
       { text: 'What contradicts my preference for Rust?', expected: 'velixar_contradictions' },
     ],
   },
+  // Future disambiguation pairs — activate when tools are implemented
+  // {
+  //   pair: ['velixar_search', 'velixar_multi_search'],
+  //   prompts: [
+  //     { text: 'Find my notes about Redis caching', expected: 'velixar_search' },
+  //     { text: 'I need comprehensive coverage of the outreach plan', expected: 'velixar_multi_search' },
+  //     { text: 'What do I know about Composio?', expected: 'velixar_search' },
+  //     { text: 'Search from all angles for partner strategy', expected: 'velixar_multi_search' },
+  //   ],
+  // },
+  // {
+  //   pair: ['velixar_context', 'velixar_prepare_context'],
+  //   prompts: [
+  //     { text: 'Orient me on this workspace', expected: 'velixar_context' },
+  //     { text: 'I am about to answer a question, assemble what I need', expected: 'velixar_prepare_context' },
+  //     { text: 'What is the current state of the project?', expected: 'velixar_context' },
+  //     { text: 'Build me a context package for answering about outreach', expected: 'velixar_prepare_context' },
+  //   ],
+  // },
 ];
 
 // Load tool descriptions from source
 function loadToolDescriptions(): Map<string, string> {
-  const toolFiles = ['memory.ts', 'recall.ts', 'graph.ts', 'cognitive.ts', 'lifecycle.ts', 'system.ts'];
+  const toolFiles = ['memory.ts', 'recall.ts', 'graph.ts', 'cognitive.ts', 'lifecycle.ts', 'system.ts', 'livedata.ts'];
   const descriptions = new Map<string, string>();
   const nameDescRegex = /name:\s*'(velixar_\w+)'[\s\S]*?description:\s*\n?\s*(?:'([^']*)'|`([^`]*)`|"([^"]*)")/g;
 

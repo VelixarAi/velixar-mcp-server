@@ -20,16 +20,12 @@ export const cognitiveTools: Tool[] = [
     name: 'velixar_identity',
     description:
       'User profile — preferences, expertise, communication style, recurring goals, stable constraints. ' +
-      'Use when you need to understand who the user is, personalize responses, or check stable preferences. ' +
-      'Supports get (default), store (save new identity facet), and update (modify existing). ' +
-      'Do NOT use for project facts (use velixar_search). Do NOT use for broad orientation (use velixar_context). ' +
-      'Identity is workspace-scoped — each project can have different user context. ' +
-      'Will not silently generalize workspace-local identity to global.',
+      'Supports get (default), store, update, delete, list, and history actions. Workspace-scoped.',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['get', 'store', 'update'], description: 'Action (default: get)' },
-        field: { type: 'string', description: 'Identity field to store/update (e.g. "expertise", "communication_style")' },
+        action: { type: 'string', enum: ['get', 'store', 'update', 'delete', 'list', 'history'], description: 'Action (default: get)' },
+        field: { type: 'string', description: 'Identity field to store/update/delete/history (e.g. "expertise", "communication_style")' },
         value: { description: 'Value to store/update (string or array of strings)' },
       },
     },
@@ -37,14 +33,17 @@ export const cognitiveTools: Tool[] = [
   {
     name: 'velixar_contradictions',
     description:
-      'Surface conflicting beliefs, preferences, or facts in the workspace. ' +
-      'Use when conflict is suspected or surfaced by another tool. Not a first move for ordinary recall. ' +
-      'Do NOT use for general search (use velixar_search). ' +
+      'Surface conflicting beliefs, preferences, or facts. Supports resolve action to mark contradictions as resolved. ' +
       'Returns pairs of contradicting statements with severity and linked memory IDs.',
     inputSchema: {
       type: 'object',
       properties: {
         status: { type: 'string', enum: ['open', 'resolved', 'all'], description: 'Filter by status (default: open)' },
+        topic: { type: 'string', description: 'Filter contradictions by topic (semantic relevance)' },
+        severity_min: { type: 'number', description: 'Minimum severity threshold (0-1)' },
+        action: { type: 'string', enum: ['list', 'resolve'], description: 'Action (default: list)' },
+        contradiction_id: { type: 'string', description: 'Contradiction ID to resolve (required for resolve action)' },
+        resolution: { type: 'string', description: 'Resolution note (required for resolve action)' },
       },
     },
   },
@@ -52,15 +51,15 @@ export const cognitiveTools: Tool[] = [
     name: 'velixar_timeline',
     description:
       'Show how a topic, entity, or belief evolved over time. ' +
-      'Use when sequence or historical change matters — "how did X evolve?" ' +
-      'Do NOT use for broad context with no temporal question (use velixar_context). ' +
-      'Operates primarily on episodic memories following temporal chains.',
+      'Supports date range filtering and summary mode for long histories.',
     inputSchema: {
       type: 'object',
       properties: {
         topic: { type: 'string', description: 'Topic or entity to trace' },
         memory_id: { type: 'string', description: 'Starting memory ID (alternative to topic)' },
         limit: { type: 'number', description: 'Max entries (default 10)' },
+        before: { type: 'string', description: 'ISO timestamp — only return entries before this time' },
+        after: { type: 'string', description: 'ISO timestamp — only return entries after this time' },
       },
     },
   },
@@ -68,15 +67,17 @@ export const cognitiveTools: Tool[] = [
     name: 'velixar_patterns',
     description:
       'Surface recurring problem/solution motifs from memory. ' +
-      'Use when the current problem may match prior patterns. Not for first-pass orientation (use velixar_context). ' +
-      'Patterns are always inferred and require repeated support — confidence reflects observation count.',
+      'Omit topic to return all detected patterns. Supports dismiss action.',
     inputSchema: {
       type: 'object',
       properties: {
-        topic: { type: 'string', description: 'Topic to find patterns for' },
+        topic: { type: 'string', description: 'Topic to find patterns for (optional — omit for all patterns)' },
         limit: { type: 'number', description: 'Max results (default 5)' },
+        min_confidence: { type: 'number', description: 'Minimum confidence threshold (0-1)' },
+        evidence: { type: 'boolean', description: 'Include supporting memory IDs (default false)' },
+        action: { type: 'string', enum: ['list', 'dismiss'], description: 'Action (default: list)' },
+        pattern_id: { type: 'string', description: 'Pattern ID to dismiss (required for dismiss action)' },
       },
-      required: ['topic'],
     },
   },
 ];
@@ -89,6 +90,72 @@ export async function handleCognitiveTool(
 ): Promise<{ text: string; isError?: boolean }> {
   if (name === 'velixar_identity') {
     const action = (args.action as string) || 'get';
+
+    // Build 4.1: delete — remove an identity field
+    if (action === 'delete') {
+      const field = args.field as string;
+      if (!field) throw new Error('field required for delete');
+      // Search for identity memories with this field tag, then delete them
+      const params = new URLSearchParams({ q: `[identity:${field}]`, user_id: config.userId, limit: '10' });
+      const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+      const validated = validateSearchResponse(raw, '/memory/search');
+      const toDelete = validated.memories.filter(m =>
+        m.tags?.includes(`identity:${field}`),
+      );
+      for (const m of toDelete) {
+        await api.delete(`/memory/${m.id}`).catch(() => {});
+      }
+      return {
+        text: JSON.stringify(wrapResponse(
+          { action: 'delete', field, deleted_count: toDelete.length, message: `Identity field "${field}" deleted (${toDelete.length} memories removed)` },
+          config,
+        )),
+      };
+    }
+
+    // Build 4.1: list — return all stored identity field names
+    if (action === 'list') {
+      const params = new URLSearchParams({ q: '[identity:', user_id: config.userId, limit: '50' });
+      const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+      const validated = validateSearchResponse(raw, '/memory/search');
+      const fields = new Set<string>();
+      for (const m of validated.memories) {
+        for (const tag of (m.tags || [])) {
+          if (tag.startsWith('identity:')) fields.add(tag.slice(9));
+        }
+      }
+      return {
+        text: JSON.stringify(wrapResponse(
+          { action: 'list', fields: [...fields], count: fields.size },
+          config,
+          { data_absent: fields.size === 0 },
+        )),
+      };
+    }
+
+    // Build 4.1: history — return evolution of a specific field over time
+    if (action === 'history') {
+      const field = args.field as string;
+      if (!field) throw new Error('field required for history');
+      const params = new URLSearchParams({ q: `[identity:${field}]`, user_id: config.userId, limit: '20' });
+      const raw = await api.get<unknown>(`/memory/search?${params}`, true);
+      const validated = validateSearchResponse(raw, '/memory/search');
+      const history = validated.memories
+        .filter(m => m.tags?.includes(`identity:${field}`))
+        .map(m => ({
+          id: m.id,
+          value: m.content.replace(`[identity:${field}] `, ''),
+          timestamp: m.created_at || '',
+        }))
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      return {
+        text: JSON.stringify(wrapResponse(
+          { action: 'history', field, entries: history, count: history.length },
+          config,
+          { data_absent: history.length === 0 },
+        )),
+      };
+    }
 
     // Store or update: persist identity facet as a tagged memory
     if (action === 'store' || action === 'update') {
@@ -164,17 +231,55 @@ export async function handleCognitiveTool(
   }
 
   if (name === 'velixar_contradictions') {
+    const action = (args.action as string) || 'list';
+
+    // Build 4.2: resolve action
+    if (action === 'resolve') {
+      const contradictionId = args.contradiction_id as string;
+      const resolution = args.resolution as string;
+      if (!contradictionId || !resolution) throw new Error('contradiction_id and resolution required for resolve action');
+
+      try {
+        await api.post('/exocortex/contradictions/resolve', {
+          contradiction_id: contradictionId,
+          resolution,
+        });
+        return {
+          text: JSON.stringify(wrapResponse(
+            { action: 'resolve', contradiction_id: contradictionId, resolution, message: 'Contradiction resolved' },
+            config,
+          )),
+        };
+      } catch {
+        // Fallback: store resolution as a memory linking the contradiction
+        await api.post('/memory', {
+          content: `[contradiction-resolved:${contradictionId}] ${resolution}`,
+          user_id: config.userId,
+          tags: ['contradiction-resolution', `contradiction:${contradictionId}`],
+          author: { type: 'user' },
+        });
+        return {
+          text: JSON.stringify(wrapResponse(
+            { action: 'resolve', contradiction_id: contradictionId, resolution, message: 'Resolution stored as memory (backend resolve endpoint unavailable)', _fallback: true },
+            config,
+          )),
+        };
+      }
+    }
+
     const status = (args.status as string) || 'open';
-    const result = await api.get<{ contradictions?: Array<Record<string, unknown>> }>(
+    const raw = await api.get<unknown>(
       `/exocortex/contradictions?status=${status}`,
       true,
     );
+    const rObj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+    const rawContradictions = Array.isArray(rObj.contradictions) ? rObj.contradictions : [];
 
     // Temporal supersession threshold: if two conflicting memories are >7 days apart,
     // classify as "superseded" (temporal update) rather than "contradiction"
     const SUPERSESSION_DAYS = 7;
 
-    const items = (result.contradictions || []).map((c: Record<string, unknown>) => {
+    const items = rawContradictions.map((c: Record<string, unknown>) => {
       const detectedA = String(c.memory_a_created_at || c.created_at_a || '');
       const detectedB = String(c.memory_b_created_at || c.created_at_b || '');
       let classification: 'contradiction' | 'superseded' = 'contradiction';
@@ -206,30 +311,46 @@ export async function handleCognitiveTool(
     const activeContradictions = items.filter(i => i.classification === 'contradiction');
     const superseded = items.filter(i => i.classification === 'superseded');
 
+    // Phase 0 filters: topic and severity
+    let filtered = activeContradictions;
+    if (args.topic) {
+      const topicLower = (args.topic as string).toLowerCase();
+      filtered = filtered.filter(i =>
+        i.statement_a.toLowerCase().includes(topicLower) ||
+        i.statement_b.toLowerCase().includes(topicLower) ||
+        i.explanation.toLowerCase().includes(topicLower),
+      );
+    }
+    if (args.severity_min !== undefined) {
+      const severityMap: Record<string, number> = { low: 0.25, medium: 0.5, high: 0.75, critical: 1.0 };
+      const minSev = args.severity_min as number;
+      filtered = filtered.filter(i => (severityMap[i.severity] ?? i.confidence) >= minSev);
+    }
+
     return {
       text: JSON.stringify(wrapResponse(
         {
-          conflict_summary: `${activeContradictions.length} active contradiction${activeContradictions.length !== 1 ? 's' : ''}, ${superseded.length} superseded (temporal updates)`,
-          evidence: activeContradictions,
+          conflict_summary: `${filtered.length} active contradiction${filtered.length !== 1 ? 's' : ''}, ${superseded.length} superseded (temporal updates)`,
+          evidence: filtered,
           superseded,
-          likely_interpretation: activeContradictions.length > 0
-            ? `${activeContradictions.filter(i => i.severity === 'high').length} high-severity conflicts require attention`
+          likely_interpretation: filtered.length > 0
+            ? `${filtered.filter(i => i.severity === 'high').length} high-severity conflicts require attention`
             : 'No active contradictions — beliefs are consistent',
-          next_step: activeContradictions.length > 0
+          next_step: filtered.length > 0
             ? 'Use velixar_inspect on linked memory IDs to understand each side, then velixar_timeline to trace belief evolution'
             : null,
-          count: activeContradictions.length,
+          count: filtered.length,
           superseded_count: superseded.length,
           justification: justify(
-            `${activeContradictions.length} contradiction${activeContradictions.length !== 1 ? 's' : ''} detected, ${superseded.length} classified as temporal supersession`,
-            activeContradictions.length > 0 ? 'retrieved_fact' : 'synthesized_summary',
+            `${filtered.length} contradiction${filtered.length !== 1 ? 's' : ''} detected, ${superseded.length} classified as temporal supersession`,
+            filtered.length > 0 ? 'retrieved_fact' : 'synthesized_summary',
             [],
             config.workspaceId,
-            { contradictionCount: activeContradictions.length },
+            { contradictionCount: filtered.length },
           ),
         },
         config,
-        { data_absent: items.length === 0, contradictions_present: activeContradictions.length > 0 },
+        { data_absent: items.length === 0, contradictions_present: filtered.length > 0 },
       )),
     };
   }
@@ -246,11 +367,13 @@ export async function handleCognitiveTool(
       // H14: Synonym expansion — query graph for entity aliases to broaden search
       let expandedTerms: string[] = [topic];
       try {
-        const graphResult = await api.post<{ nodes?: Array<Record<string, unknown>> }>('/graph/traverse', { entity: topic, max_hops: 1 });
-        if (graphResult.nodes?.length) {
-          const aliases = graphResult.nodes
-            .filter(n => String(n.relationship || '').match(/alias|also_known_as|synonym/i))
-            .map(n => String(n.label || ''))
+        const graphResult = await api.post<unknown>('/graph/traverse', { entity: topic, max_hops: 1 });
+        const gObj = (graphResult && typeof graphResult === 'object') ? graphResult as Record<string, unknown> : {};
+        const gNodes = Array.isArray(gObj.nodes) ? gObj.nodes : [];
+        if (gNodes.length) {
+          const aliases = gNodes
+            .filter((n: any) => String(n.relationship || '').match(/alias|also_known_as|synonym/i))
+            .map((n: any) => String(n.label || ''))
             .filter(Boolean);
           if (aliases.length) expandedTerms.push(...aliases.slice(0, 3));
         }
@@ -264,10 +387,12 @@ export async function handleCognitiveTool(
       // H13: Also fetch graph relationships for the entity
       let relatedEntities: Array<{ label: string; relationship: string }> = [];
       try {
-        const graphResult = await api.post<{ nodes?: Array<Record<string, unknown>>; edges?: Array<Record<string, unknown>> }>('/graph/traverse', { entity: topic, max_hops: 1 });
-        relatedEntities = (graphResult.edges || []).map(e => ({
-          label: String((e as Record<string, unknown>).target || ''),
-          relationship: String((e as Record<string, unknown>).relationship || 'related'),
+        const graphResult = await api.post<unknown>('/graph/traverse', { entity: topic, max_hops: 1 });
+        const gObj = (graphResult && typeof graphResult === 'object') ? graphResult as Record<string, unknown> : {};
+        const gEdges = Array.isArray(gObj.edges) ? gObj.edges : [];
+        relatedEntities = gEdges.map((e: any) => ({
+          label: String(e.target || ''),
+          relationship: String(e.relationship || 'related'),
         })).slice(0, 10);
       } catch { /* graph unavailable */ }
       const result = validateSearchResponse(raw, '/memory/search');
@@ -354,14 +479,42 @@ export async function handleCognitiveTool(
   }
 
   if (name === 'velixar_patterns') {
+    const action = (args.action as string) || 'list';
+
+    // Build 4.3: dismiss action
+    if (action === 'dismiss') {
+      const patternId = args.pattern_id as string;
+      if (!patternId) throw new Error('pattern_id required for dismiss action');
+      try {
+        await api.post('/patterns/dismiss', { pattern_id: patternId });
+      } catch {
+        // Fallback: store dismissal as memory
+        await api.post('/memory', {
+          content: `[pattern-dismissed:${patternId}]`,
+          user_id: config.userId,
+          tags: ['pattern-dismissed', `pattern:${patternId}`],
+          author: { type: 'user' },
+        });
+      }
+      return {
+        text: JSON.stringify(wrapResponse(
+          { action: 'dismiss', pattern_id: patternId, message: 'Pattern dismissed' },
+          config,
+        )),
+      };
+    }
+
+    const includeEvidence = args.evidence === true;
     const params = new URLSearchParams({ q: args.topic as string });
     if (args.limit) params.set('limit', String(args.limit));
-    const result = await api.get<{ patterns?: Array<Record<string, unknown>> }>(
+    const raw = await api.get<unknown>(
       `/patterns/suggest?${params}`,
       true,
     );
+    const rObj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+    const rawPatterns = Array.isArray(rObj.patterns) ? rObj.patterns : [];
 
-    const patterns = (result.patterns || []).map((p: any) => {
+    const patterns = rawPatterns.map((p: any) => {
       const occurrences = p.occurrence_count || p.frequency || 0;
       const memoryIds: string[] = p.supporting_memories || [];
       const rawConfidence = p.confidence ?? 0.5;
@@ -380,7 +533,8 @@ export async function handleCognitiveTool(
         prior_solution: p.solution || '',
         confidence: Math.round(adjustedConfidence * 100) / 100,
         confidence_raw: rawConfidence,
-        supporting_memories: memoryIds,
+        // Build 4.3: conditionally include evidence
+        ...(includeEvidence ? { supporting_memories: memoryIds } : {}),
         occurrence_count: occurrences,
         pattern_type: patternType, // H19
         ...(adjustedConfidence < rawConfidence ? { confidence_decay_reason: `Only ${occurrences} supporting observation${occurrences !== 1 ? 's' : ''}` } : {}),

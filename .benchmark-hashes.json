@@ -21,8 +21,17 @@
   "velixar_retag": "63214b1b",
   "velixar_export": "7157a5af",
   "velixar_import": "9ac0cd46",
+  "velixar_upload": "pending",
   "velixar_health": "dde96f18",
   "velixar_debug": "55872cf3",
   "velixar_capabilities": "3fa83f1d",
-  "velixar_security": "14596e40"
+  "velixar_security": "14596e40",
+  "velixar_discover_data": "pending",
+  "velixar_list_sources": "pending",
+  "velixar_query_source": "pending",
+  "velixar_multi_search": "pending",
+  "velixar_search_neighborhood": "pending",
+  "velixar_coverage_check": "pending",
+  "velixar_prepare_context": "pending",
+  "velixar_refine_context": "pending"
 }

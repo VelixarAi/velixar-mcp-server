@@ -37,7 +37,7 @@ const RELEVANT_STALE_CALLS = 5; // refresh after 5 tool calls
 
 // ── Constitution (static, versioned with server) ──
 
-const CONSTITUTION_VERSION = '0.5.0';
+const CONSTITUTION_VERSION = '0.6.0';
 const CONSTITUTION = `# Velixar Cognitive Constitution v${CONSTITUTION_VERSION}
 
 ## Core Principle
@@ -51,6 +51,13 @@ ${renderModesTable()}
 2. Identify the cognitive mode from the user's question
 3. Narrow with the specialized tool for that mode
 4. Stop when the question is answered — do not chain unnecessarily
+
+## Two-Tool Path for Complex Synthesis
+For complex questions requiring comprehensive, verified context:
+1. velixar_context — orient (what exists?)
+2. velixar_prepare_context — assemble verified context with gap declaration
+This handles multi-angle search, coverage verification, and temporal analysis internally.
+Use velixar_search for simple factual lookups — do not over-engineer simple questions.
 
 ## Anti-Patterns (never do these)
 - Never dump raw memory lists without synthesis
@@ -90,18 +97,21 @@ export async function fetchRecall(api: ApiClient, config: ApiConfig): Promise<vo
   if (process.env.VELIXAR_AUTO_RECALL !== 'false') {
     const limit = parseInt(process.env.VELIXAR_RECALL_LIMIT || '10', 10);
     promises.push(
-      api.get<{ memories?: MemoryRecord[] }>(
-        `/memory/list?user_id=${config.userId}&limit=${limit}`, true,
-      ).then(r => { _memories = r.memories || []; })
-       .catch(() => { _memories = []; }),
+    api.get<unknown>(`/memory/list?user_id=${config.userId}&limit=${limit}`, true,
+    ).then(r => {
+      const rObj = (r && typeof r === 'object') ? r as Record<string, unknown> : {};
+      _memories = Array.isArray(rObj.memories) ? rObj.memories as MemoryRecord[] : [];
+    })
+     .catch(() => { _memories = []; }),
     );
   }
 
   // Identity
   promises.push(
-    api.get<{ identity?: IdentityData }>('/memory/identity', true)
+    api.get<unknown>('/memory/identity', true)
       .then(r => {
-        _identity = r.identity || null;
+        const rObj = (r && typeof r === 'object') ? r as Record<string, unknown> : {};
+        _identity = (rObj.identity && typeof rObj.identity === 'object') ? rObj.identity as IdentityData : null;
         _identityFetchedAt = Date.now();
       })
       .catch(() => { _identity = null; }),
@@ -114,9 +124,10 @@ export async function fetchRecall(api: ApiClient, config: ApiConfig): Promise<vo
     limit: '10',
   });
   promises.push(
-    api.get<{ memories?: MemoryRecord[] }>(`/memory/search?${relevantParams}`, true)
+    api.get<unknown>(`/memory/search?${relevantParams}`, true)
       .then(r => {
-        _relevantMemories = r.memories || [];
+        const rObj = (r && typeof r === 'object') ? r as Record<string, unknown> : {};
+        _relevantMemories = Array.isArray(rObj.memories) ? rObj.memories as MemoryRecord[] : [];
         _relevantStaleAfter = Date.now() + 5 * 60 * 1000;
         _toolCallsSinceRefresh = 0;
       })
@@ -127,8 +138,12 @@ export async function fetchRecall(api: ApiClient, config: ApiConfig): Promise<vo
 }
 
 export function refreshIdentity(api: ApiClient): void {
-  api.get<{ identity?: IdentityData }>('/memory/identity', true)
-    .then(r => { _identity = r.identity || null; _identityFetchedAt = Date.now(); })
+  api.get<unknown>('/memory/identity', true)
+    .then(r => {
+      const rObj = (r && typeof r === 'object') ? r as Record<string, unknown> : {};
+      _identity = (rObj.identity && typeof rObj.identity === 'object') ? rObj.identity as IdentityData : null;
+      _identityFetchedAt = Date.now();
+    })
     .catch(() => {});
 }
 
@@ -138,9 +153,10 @@ export function refreshRelevantMemories(api: ApiClient, config: ApiConfig): void
     user_id: config.userId,
     limit: '10',
   });
-  api.get<{ memories?: MemoryRecord[] }>(`/memory/search?${params}`, true)
+  api.get<unknown>(`/memory/search?${params}`, true)
     .then(r => {
-      _relevantMemories = r.memories || [];
+      const rObj = (r && typeof r === 'object') ? r as Record<string, unknown> : {};
+      _relevantMemories = Array.isArray(rObj.memories) ? rObj.memories as MemoryRecord[] : [];
       _relevantStaleAfter = Date.now() + 5 * 60 * 1000; // 5 min
       _toolCallsSinceRefresh = 0;
     })
@@ -299,7 +315,7 @@ export function getResourceUris(): string[] {
 // Returns the compact text on first call per session, then null.
 const COMPACT_CONSTITUTION = `Velixar Constitution (compact): ` +
   `Start with velixar_context for orientation, then narrow with the specialized tool matching the cognitive mode. ` +
-  `Modes: Retrieval→search, Structure→graph_traverse, Continuity→timeline, Conflict→contradictions, Consolidation→distill. ` +
+  `Modes: ${COGNITIVE_MODES.map(m => `${m.mode}→${m.tool.replace('velixar_', '')}`).join(', ')}. ` +
   `Stop when answered. Never dump raw lists. Qualify inferred claims. Surface contradictions. Never leak across workspaces.`;
 
 export function getConstitutionFallback(): string | null {

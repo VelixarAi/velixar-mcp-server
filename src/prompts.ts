@@ -16,10 +16,13 @@ export interface WorkflowPrompt {
 export const COGNITIVE_MODES = [
   { mode: 'Orientation', question: '"Understand the situation broadly"', tool: 'velixar_context' },
   { mode: 'Retrieval', question: '"I know what I\'m looking for"', tool: 'velixar_search' },
+  { mode: 'Deep Retrieval', question: '"I need comprehensive coverage"', tool: 'velixar_multi_search' },
   { mode: 'Structure', question: '"Understand connections"', tool: 'velixar_graph_traverse' },
   { mode: 'Continuity', question: '"How did this evolve?"', tool: 'velixar_timeline' },
   { mode: 'Conflict', question: '"Something contradicts"', tool: 'velixar_contradictions' },
   { mode: 'Consolidation', question: '"Preserve what matters"', tool: 'velixar_distill' },
+  { mode: 'Verification', question: '"Is my context complete?"', tool: 'velixar_coverage_check' },
+  { mode: 'Construction', question: '"Assemble what I need to answer"', tool: 'velixar_prepare_context' },
 ] as const;
 
 export function renderModesTable(): string {
@@ -32,7 +35,7 @@ export function renderModesTable(): string {
 const cognitive_constitution: WorkflowPrompt = {
   name: 'cognitive_constitution',
   description: 'Core behavioral rules, cognitive modes, anti-patterns, error handling, and justification policy. Read this first.',
-  version: '1.1.0',
+  version: '1.2.0',
   arguments: [],
   messages: [{
     role: 'user',
@@ -49,6 +52,13 @@ ${renderModesTable()}
 2. Identify the cognitive mode from the user's question
 3. Narrow with the specialized tool for that mode
 4. Stop when the question is answered — do not chain unnecessarily
+
+## Two-Tool Path for Complex Synthesis
+For complex questions requiring comprehensive, verified context:
+1. velixar_context — orient (what exists?)
+2. velixar_prepare_context — assemble verified context with gap declaration
+This handles multi-angle search, coverage verification, and temporal analysis internally.
+Use velixar_search for simple factual lookups — do not over-engineer simple questions.
 
 ## Search Capabilities (KG-Merged)
 Search results are automatically enhanced by the knowledge graph:

@@ -84,9 +84,45 @@ const checks: Check[] = [
     body: { entity: '__schema_test__', max_hops: 1 },
     validate: (d) => {
       const r = d as Record<string, unknown>;
-      // 404/not-found is acceptable — we just need the shape
       if (has(r, 'error')) return null;
       if (!has(r, 'nodes') && !has(r, 'entities') && !has(r, 'results')) return 'missing nodes/entities/results';
+      return null;
+    },
+  },
+  {
+    name: 'memory/multi_search',
+    method: 'POST',
+    path: '/memory/multi_search',
+    body: { queries: ['__schema_test__'], limit_per_query: 1 },
+    validate: (d) => {
+      const r = d as Record<string, unknown>;
+      if (has(r, 'error')) return null;
+      if (!has(r, 'results')) return 'missing results array';
+      if (!Array.isArray((r as Record<string, unknown>).results)) return 'results is not an array';
+      return null;
+    },
+  },
+  {
+    name: 'memory/search_by_vector',
+    method: 'POST',
+    path: '/memory/search_by_vector',
+    body: { memory_id: '00000000-0000-0000-0000-000000000000', limit: 1 },
+    validate: (d) => {
+      const r = d as Record<string, unknown>;
+      if (has(r, 'error')) return null; // 404 for non-existent ID is acceptable
+      if (!has(r, 'neighbors') && !has(r, 'memories')) return 'missing neighbors array';
+      return null;
+    },
+  },
+  {
+    name: 'memory/coverage',
+    method: 'POST',
+    path: '/memory/coverage',
+    body: { topic: '__schema_test__', memory_ids: ['__test__'] },
+    validate: (d) => {
+      const r = d as Record<string, unknown>;
+      if (has(r, 'error')) return null;
+      if (!has(r, 'coverage_ratio') && !has(r, 'total_relevant')) return 'missing coverage_ratio or total_relevant';
       return null;
     },
   },

@@ -15,7 +15,7 @@ const serverSrc = readFileSync(join(root, 'src/server.ts'), 'utf-8');
 const matrixSrc = readFileSync(join(root, 'tool-prompt-matrix.json'), 'utf-8');
 
 // Extract tool names from server.ts imports (tool arrays)
-const toolFiles = ['memory.ts', 'recall.ts', 'graph.ts', 'cognitive.ts', 'lifecycle.ts', 'system.ts'];
+const toolFiles = ['memory.ts', 'recall.ts', 'graph.ts', 'cognitive.ts', 'lifecycle.ts', 'system.ts', 'livedata.ts', 'retrieval.ts', 'construction.ts'];
 const actualTools = new Set();
 for (const f of toolFiles) {
   const src = readFileSync(join(root, 'src/tools', f), 'utf-8');
@@ -72,6 +72,16 @@ for (const [tool, prompts] of Object.entries(matrix.tools)) {
       console.error(`FAIL: Matrix says ${tool} is in prompt ${prompt}, but prompt text doesn't reference it`);
       failures++;
     }
+  }
+}
+
+// Check 5: Every tool file is imported in server.ts (handler registration safety)
+const serverImports = serverSrc.match(/from\s+['"]\.\/tools\/(\w+)\.js['"]/g) || [];
+const importedFiles = new Set(serverImports.map(m => m.match(/\/(\w+)\.js/)[1] + '.ts'));
+for (const f of toolFiles) {
+  if (!importedFiles.has(f)) {
+    console.error(`FAIL: Tool file ${f} is scanned but not imported in server.ts — tools will be listed but not routable`);
+    failures++;
   }
 }
 

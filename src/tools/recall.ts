@@ -8,6 +8,7 @@ import { normalizeMemory, wrapResponse } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { justify } from '../justify.js';
 import { validateSearchResponse, validateListResponse, validateOverviewResponse } from '../validate.js';
+import { temporalMerge, mergeMultiQueryResults } from '../temporal_merge.js';
 
 export const recallTools: Tool[] = [
   {
@@ -49,38 +50,83 @@ export async function handleRecallTool(
   if (name === 'velixar_context') {
     const topic = (args.topic as string) || '';
     const compact = args.compact !== false;
+    const multiAngle = process.env.VELIXAR_CONTEXT_MULTI_ANGLE === 'true';
 
-    // Parallel fetch: search (topic or general), recent list, overview, contradictions
-    // Returns partial results if some fail — time-to-first-useful-context optimization
-    const searchQ = topic || 'important recent context';
-    const params = new URLSearchParams({ q: searchQ, user_id: config.userId, limit: compact ? '5' : '10' });
     const listParams = new URLSearchParams({ user_id: config.userId, limit: '5' });
-
     const startMs = Date.now();
-    const [searchRes, listRes, overviewRes, contradictionsRes] = await Promise.allSettled([
-      api.get<unknown>(`/memory/search?${params}`, true),
+
+    // Build search queries — single or multi-angle based on feature flag
+    let searchPromises: Array<Promise<unknown>>;
+    if (multiAngle && topic) {
+      const angles = [topic, `decisions about ${topic}`, `problems or issues with ${topic}`];
+      const perAngleLimit = compact ? '3' : '5';
+      searchPromises = angles.map(q => {
+        const p = new URLSearchParams({ q, user_id: config.userId, limit: perAngleLimit });
+        return api.get<unknown>(`/memory/search?${p}`, true);
+      });
+    } else if (multiAngle && !topic) {
+      const angles = ['important recent context', 'open decisions', 'unresolved issues'];
+      searchPromises = angles.map(q => {
+        const p = new URLSearchParams({ q, user_id: config.userId, limit: compact ? '3' : '5' });
+        return api.get<unknown>(`/memory/search?${p}`, true);
+      });
+    } else {
+      const searchQ = topic || 'important recent context';
+      const params = new URLSearchParams({ q: searchQ, user_id: config.userId, limit: compact ? '5' : '10' });
+      searchPromises = [api.get<unknown>(`/memory/search?${params}`, true)];
+    }
+
+    const [searchResults, listRes, overviewRes, contradictionsRes] = await Promise.allSettled([
+      Promise.allSettled(searchPromises),
       api.get<unknown>(`/memory/list?${listParams}`, true),
       api.get<unknown>('/exocortex/overview', true),
-      api.get<{ contradictions?: Array<Record<string, unknown>> }>('/exocortex/contradictions?status=open', true),
+      api.get<unknown>('/exocortex/contradictions?status=open', true),
     ]);
 
-    const search = searchRes.status === 'fulfilled' ? validateSearchResponse(searchRes.value, '/memory/search') : null;
-    const list = listRes.status === 'fulfilled' ? validateListResponse(listRes.value, '/memory/list') : null;
-    const overview = overviewRes.status === 'fulfilled' ? validateOverviewResponse(overviewRes.value, '/exocortex/overview') : null;
-    const contradictions = contradictionsRes.status === 'fulfilled' ? contradictionsRes.value : null;
+    // Merge search results — multi-angle dedup or single pass
+    let relevantFacts: MemoryItem[] = [];
+    const searchAnglesUsed = searchPromises.length;
+    if (searchResults.status === 'fulfilled') {
+      const subResults = searchResults.value as PromiseSettledResult<unknown>[];
+      if (multiAngle && subResults.length > 1) {
+        // Multi-angle: merge + dedup via temporal_merge
+        const perQuery = subResults.map((r, i) => {
+          if (r.status !== 'fulfilled') return { query: `angle-${i}`, memories: [] as MemoryItem[] };
+          try {
+            const validated = validateSearchResponse(r.value, '/memory/search');
+            return {
+              query: `angle-${i}`,
+              memories: validated.memories.map(m => { const mem = normalizeMemory(m); mem.workspace_id = config.workspaceId; return mem; }),
+            };
+          } catch { return { query: `angle-${i}`, memories: [] as MemoryItem[] }; }
+        });
+        const { merged } = mergeMultiQueryResults(perQuery, 'weighted', compact ? 8 : 15);
+        const temporal = temporalMerge(merged);
+        relevantFacts = temporal.current;
+      } else {
+        // Single angle
+        const r = subResults[0];
+        if (r && r.status === 'fulfilled') {
+          try {
+            const validated = validateSearchResponse(r.value, '/memory/search');
+            relevantFacts = validated.memories.map(m => { const mem = normalizeMemory(m); mem.workspace_id = config.workspaceId; return mem; });
+          } catch { /* empty */ }
+        }
+      }
+    }
 
-    // Normalize search results — prefer semantic for context, episodic for evidence
-    const relevantFacts = (search?.memories || []).map(m => {
-      const mem = normalizeMemory(m);
-      mem.workspace_id = config.workspaceId;
-      return mem;
-    });
-    // Sort: semantic first (context injection), then episodic (evidence citations)
+    // Sort: semantic first, then by relevance
     relevantFacts.sort((a, b) => {
       if (a.memory_type === 'semantic' && b.memory_type !== 'semantic') return -1;
       if (a.memory_type !== 'semantic' && b.memory_type === 'semantic') return 1;
       return (b.relevance ?? 0) - (a.relevance ?? 0);
     });
+
+    const list = listRes.status === 'fulfilled' ? validateListResponse(listRes.value, '/memory/list') : null;
+    const overview = overviewRes.status === 'fulfilled' ? validateOverviewResponse(overviewRes.value, '/exocortex/overview') : null;
+    const contradictionsRaw = contradictionsRes.status === 'fulfilled'
+      ? ((contradictionsRes.value && typeof contradictionsRes.value === 'object') ? contradictionsRes.value as Record<string, unknown> : {})
+      : null;
 
     // Recent activity from list
     const recentItems = (list?.memories || []).map(m => {
@@ -90,7 +136,8 @@ export async function handleRecallTool(
     });
 
     // Contradiction flags
-    const openContradictions = (contradictions?.contradictions || []).map((c: any) => ({
+    const rawCArr = contradictionsRaw ? (Array.isArray(contradictionsRaw.contradictions) ? contradictionsRaw.contradictions : []) : [];
+    const openContradictions = rawCArr.map((c: any) => ({
       id: c.id,
       statement_a: c.statement_a || c.memory_a_content,
       statement_b: c.statement_b || c.memory_b_content,
@@ -107,9 +154,10 @@ export async function handleRecallTool(
       open_issues: openContradictions,
       contradiction_count: openContradictions.length,
       pattern_hints: [] as string[],
-      // H9: Per-section freshness — LLM can discount stale sections
+      // Phase 4: Multi-angle search metadata
+      ...(multiAngle ? { search_angles_used: searchAnglesUsed } : {}),
       section_freshness: {
-        relevant_facts: { source: 'search', fetched_at: new Date().toISOString() },
+        relevant_facts: { source: multiAngle ? 'multi_angle_search' : 'search', fetched_at: new Date().toISOString() },
         recent_activity: { source: 'list', fetched_at: new Date().toISOString() },
         overview: overviewRes.status === 'fulfilled' ? { source: 'overview', fetched_at: new Date().toISOString() } : { source: 'overview', status: 'unavailable' },
         contradictions: contradictionsRes.status === 'fulfilled' ? { source: 'contradictions', fetched_at: new Date().toISOString() } : { source: 'contradictions', status: 'unavailable' },
@@ -125,7 +173,7 @@ export async function handleRecallTool(
       ),
     };
 
-    const partial = [searchRes, listRes, overviewRes, contradictionsRes].some(r => r.status === 'rejected');
+    const partial = [searchResults, listRes, overviewRes, contradictionsRes].some(r => r.status === 'rejected');
     const contextMs = Date.now() - startMs;
 
     return {
@@ -166,13 +214,15 @@ export async function handleRecallTool(
     if (mem.provenance.derived_from?.length) {
       const checks = await Promise.allSettled(
         mem.provenance.derived_from.map(refId =>
-          api.get<{ memory?: Record<string, unknown> }>(`/memory/${refId}`, true),
+          api.get<unknown>(`/memory/${refId}`, true),
         ),
       );
-      provenanceStatus = mem.provenance.derived_from.map((refId, i) => ({
-        id: refId,
-        status: (checks[i].status === 'fulfilled' && (checks[i] as PromiseFulfilledResult<{ memory?: Record<string, unknown> }>).value.memory) ? 'exists' as const : 'deleted' as const,
-      }));
+      provenanceStatus = mem.provenance.derived_from.map((refId, i) => {
+        if (checks[i].status !== 'fulfilled') return { id: refId, status: 'deleted' as const };
+        const val = checks[i].status === 'fulfilled' ? (checks[i] as PromiseFulfilledResult<unknown>).value : null;
+        const hasMemory = val && typeof val === 'object' && 'memory' in (val as Record<string, unknown>) && (val as Record<string, unknown>).memory;
+        return { id: refId, status: hasMemory ? 'exists' as const : 'deleted' as const };
+      });
     }
 
     const justification = justify(

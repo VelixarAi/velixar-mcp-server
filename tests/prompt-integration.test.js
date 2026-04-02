@@ -15,7 +15,7 @@ const root = join(__dirname, '..');
 const promptsSrc = readFileSync(join(root, 'src/prompts.ts'), 'utf-8');
 
 // Extract tool names from tool files
-const toolFiles = ['memory.ts', 'recall.ts', 'graph.ts', 'cognitive.ts', 'lifecycle.ts', 'system.ts'];
+const toolFiles = ['memory.ts', 'recall.ts', 'graph.ts', 'cognitive.ts', 'lifecycle.ts', 'system.ts', 'livedata.ts', 'retrieval.ts', 'construction.ts'];
 const actualTools = new Set();
 for (const f of toolFiles) {
   const src = readFileSync(join(root, 'src/tools', f), 'utf-8');

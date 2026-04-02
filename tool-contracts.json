@@ -71,6 +71,20 @@
       "do_not_use_when": "first time working on something",
       "disambiguate_from": ["velixar_session_recall", "velixar_context"],
       "signal_words": ["resume", "pick up where", "last session", "continue"]
+    },
+    "velixar_batch_search": {
+      "cognitive_mode": "retrieval",
+      "use_when": "multiple independent queries needed, separate results per query",
+      "do_not_use_when": "need merged/deduplicated results (use multi_search) or single lookup",
+      "disambiguate_from": ["velixar_search", "velixar_multi_search"],
+      "signal_words": ["batch", "multiple queries", "several lookups", "independent searches"]
+    },
+    "velixar_batch_store": {
+      "cognitive_mode": "consolidation",
+      "use_when": "storing multiple facts at once",
+      "do_not_use_when": "single fact (use store) or session distillation (use distill)",
+      "disambiguate_from": ["velixar_store", "velixar_distill", "velixar_import"],
+      "signal_words": ["bulk", "multiple facts", "batch store", "several memories"]
     }
   }
 }
