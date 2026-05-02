@@ -379,6 +379,43 @@ export class ApiClient {
   async delete<T>(path: string): Promise<T> {
     return this.request<T>(path, { method: 'DELETE' });
   }
+
+  // ── Validated Variants ──
+  // Force a runtime validator on every response. Prefer these in new code.
+  // The raw cast in `request<T>` is the silent-data-loss class — avoid it.
+
+  async requestValidated<T>(
+    path: string,
+    options: RequestInit & { cacheable?: boolean },
+    validate: (raw: unknown, endpoint: string) => T,
+  ): Promise<T> {
+    const raw = await this.request<unknown>(path, options);
+    return validate(raw, path);
+  }
+
+  async getValidated<T>(
+    path: string,
+    validate: (raw: unknown, endpoint: string) => T,
+    cacheable = false,
+  ): Promise<T> {
+    return this.requestValidated(path, { method: 'GET', cacheable }, validate);
+  }
+
+  async postValidated<T>(
+    path: string,
+    body: unknown,
+    validate: (raw: unknown, endpoint: string) => T,
+  ): Promise<T> {
+    return this.requestValidated(path, { method: 'POST', body: JSON.stringify(body) }, validate);
+  }
+
+  async patchValidated<T>(
+    path: string,
+    body: unknown,
+    validate: (raw: unknown, endpoint: string) => T,
+  ): Promise<T> {
+    return this.requestValidated(path, { method: 'PATCH', body: JSON.stringify(body) }, validate);
+  }
 }
 
 // ── Response Normalization ──
