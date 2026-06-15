@@ -43,6 +43,7 @@ export const memoryTools: Tool[] = [
         dedup_threshold: { type: 'number', description: 'Similarity threshold for duplicate detection (default: 0.95). Only used when check_duplicate is true.' },
         source: { type: 'string', description: 'Provenance label (e.g., "user-stated", "derived-from-analysis")' },
         source_ids: { type: 'array', items: { type: 'string' }, description: 'Parent memory IDs for provenance linking' },
+        atomic: { type: 'boolean', description: 'Store as a single unit — never split into chunks. Use for poems, quotes, structured data that must stay whole.' },
       },
       required: ['content'],
     },
@@ -62,6 +63,7 @@ export const memoryTools: Tool[] = [
         before: { type: 'string', description: 'ISO timestamp — only return memories created before this time' },
         after: { type: 'string', description: 'ISO timestamp — only return memories created after this time' },
         tier: { type: 'number', description: 'Filter by memory tier (0=pinned, 1=session, 2=semantic, 3=org)' },
+        full_content: { type: 'boolean', description: 'Reassemble chunked memories into full content (default: false). Use for poems, essays, or content that must be returned whole.' },
       },
       required: ['query'],
     },
@@ -160,6 +162,7 @@ export async function handleMemoryTool(
       author: { type: 'agent', agent_id: config.userId },
       source_type: (args.source as string) || 'mcp_store',
       quarantine_zone: (args.quarantine_zone as string) || null,
+      no_chunk: args.atomic === true,
     };
     if (args.source_ids) storeBody.previous_memory_id = (args.source_ids as string[])[0] || null;
 
@@ -173,6 +176,7 @@ export async function handleMemoryTool(
   if (name === 'velixar_search') {
     const params = _baseFilter(config, args);
     params.set('q', args.query as string);
+    if (args.full_content) params.set('reassemble', 'true');
     const raw = await api.get<unknown>(`/memory/search?${params}`, true);
     const result = validateSearchResponse(raw, '/memory/search');
     let items = result.memories.map(m => {

@@ -25,6 +25,7 @@ import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
 import { liveDataTools, handleLiveDataTool } from './tools/livedata.js';
 import { retrievalTools, handleRetrievalTool } from './tools/retrieval.js';
 import { constructionTools, handleConstructionTool } from './tools/construction.js';
+import { clairvoyanceTools, handleClairvoyanceTool } from './tools/clairvoyance.js';
 import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity, refreshRelevantMemories, markToolCall, isRelevantStale, getConstitutionFallback } from './resources.js';
 import { getPromptList, getPrompt, allPrompts } from './prompts.js';
 
@@ -79,7 +80,7 @@ const detectedHost = process.env.CURSOR_SESSION_ID ? 'cursor'
   : 'unknown';
 if (detectedHost !== 'unknown') log('info', 'host_detected', { host: detectedHost });
 
-const allTools = [...memoryTools, ...recallTools, ...graphTools, ...cognitiveTools, ...lifecycleTools, ...liveDataTools, ...retrievalTools, ...constructionTools, ...systemTools];
+const allTools = [...memoryTools, ...recallTools, ...graphTools, ...cognitiveTools, ...lifecycleTools, ...liveDataTools, ...retrievalTools, ...constructionTools, ...systemTools, ...clairvoyanceTools];
 const allToolNames = allTools.map(t => t.name);
 
 // ── Build 7.2: Tool Tier System ──
@@ -115,6 +116,7 @@ const toolHandlers: Array<{ names: Set<string>; handler: typeof handleMemoryTool
   { names: new Set(liveDataTools.map(t => t.name)), handler: handleLiveDataTool },
   { names: new Set(retrievalTools.map(t => t.name).concat('velixar_batch_search')), handler: handleRetrievalTool },
   { names: new Set(constructionTools.map(t => t.name)), handler: handleConstructionTool },
+  { names: new Set(clairvoyanceTools.map(t => t.name)), handler: handleClairvoyanceTool },
 ];
 const systemToolNames = new Set(systemTools.map(t => t.name));
 
