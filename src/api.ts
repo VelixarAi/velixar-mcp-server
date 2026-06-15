@@ -250,6 +250,7 @@ export class ApiClient {
       }
     }
 
+    if (!path.startsWith('/v1/')) path = `/v1${path}`;  // live API is /v1-prefixed; server router normalizes identically
     const url = `${this.config.apiBase}${path}`;
     const start = Date.now();
     let lastError: Error | null = null;
