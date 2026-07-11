@@ -19,7 +19,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24 # bundles npm >= 11.5 (required for trusted publishing)
-          registry-url: "https://registry.npmjs.org"
+          # NO registry-url here: it writes an _authToken line into .npmrc,
+          # which overrides OIDC and breaks trusted publishing (E404 on PUT).
       - run: npm ci
       - run: npm test
       - run: npm publish # prepublishOnly runs the tsc build; OIDC handles auth
