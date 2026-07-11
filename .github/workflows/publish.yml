@@ -23,4 +23,4 @@ jobs:
           # which overrides OIDC and breaks trusted publishing (E404 on PUT).
       - run: npm ci
       - run: npm test
-      - run: npm publish # prepublishOnly runs the tsc build; OIDC handles auth
+      - run: npm publish --loglevel http # prepublishOnly runs tsc; OIDC handles auth
