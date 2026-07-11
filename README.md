@@ -18,7 +18,7 @@ Every AI assistant starts from zero every conversation. Velixar fixes that — b
 - **Distill sessions** into durable memories automatically, with deduplication
 - **Import and export** your entire memory corpus for backup or migration
 
-25 tools. 5 live resources. 16 workflow prompts. One `npm install`.
+40 tools. 5 live resources. 19 workflow prompts. One `npm install`.
 
 ## Quick Start
 
