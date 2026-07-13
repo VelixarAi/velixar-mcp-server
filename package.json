@@ -1,6 +1,6 @@
 {
   "name": "velixar-mcp-server",
-  "version": "1.1.0",
+  "version": "1.2.2",
   "description": "MCP server for Velixar persistent cognitive context — memory, identity, graph, time, and contradiction for LLMs",
   "type": "module",
   "bin": {
@@ -10,7 +10,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsc --watch",
-    "test": "node --test tests/*.test.js",
+    "test": "npm run build && node --test tests/*.test.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

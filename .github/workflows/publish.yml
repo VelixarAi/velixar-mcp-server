@@ -1,0 +1,51 @@
+name: Publish to npm
+
+# PROVENANCE is the property that matters here, and it does NOT come from trusted
+# publishing — it comes from `id-token: write` + `--provenance`. That works with an
+# automation token, which also bypasses 2FA and so can publish unattended.
+#
+# We tried tokenless OIDC trusted publishing first. npm returned 404 on the token
+# exchange (-> ENEEDAUTH) every time: the registry had no trusted-publisher record
+# matching this repo + workflow. GitHub's half was fine throughout — it issued the
+# id-token (HTTP 200). Rather than keep guessing at npm's form, we publish with an
+# automation token and STILL attach provenance.
+#
+# 1.2.0 and 1.2.1 were both published by hand and carry NO attestation. This
+# workflow exists so that never happens again.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write # mints the provenance attestation — required even with a token
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm test # builds first — the version guard inspects dist/
+
+      - name: Publish
+        run: npm publish --provenance --access public --loglevel http
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify the registry serves what we built
+        # 1.2.0 told every host it was 1.1.0. A release that cannot prove its own
+        # version is the bug this whole release exists to fix — so check, always.
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          sleep 20
+          PUBLISHED=$(npm view "velixar-mcp-server@$VERSION" version)
+          echo "package.json=$VERSION  registry=$PUBLISHED"
+          test "$VERSION" = "$PUBLISHED"

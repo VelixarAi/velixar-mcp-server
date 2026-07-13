@@ -85,6 +85,14 @@
       "do_not_use_when": "single fact (use store) or session distillation (use distill)",
       "disambiguate_from": ["velixar_store", "velixar_distill", "velixar_import"],
       "signal_words": ["bulk", "multiple facts", "batch store", "several memories"]
+    },
+    "velixar_act": {
+      "cognitive_mode": "stewardship",
+      "use_when": "non-trivial change that future sessions will need to know about (architectural decision, hardening work, multi-file edit, design doc)",
+      "do_not_use_when": "trivial lookups, conversational turns, pure read-only commands",
+      "disambiguate_from": ["velixar_store"],
+      "signal_words": ["recall first", "stewardship", "verify after", "remember this for next time", "future sessions"],
+      "status": "forward-declared — workflow lives in the recall_first prompt until the server-enforced wrapper ships (see RECALL-FIRST-MODE-TASKS.md Section 5 Step 6)"
     }
   }
 }

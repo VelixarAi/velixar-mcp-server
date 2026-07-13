@@ -23,6 +23,9 @@ export const COGNITIVE_MODES = [
   { mode: 'Consolidation', question: '"Preserve what matters"', tool: 'velixar_distill' },
   { mode: 'Verification', question: '"Is my context complete?"', tool: 'velixar_coverage_check' },
   { mode: 'Construction', question: '"Assemble what I need to answer"', tool: 'velixar_prepare_context' },
+  { mode: 'Personalization', question: '"What do I know about this user?"', tool: 'velixar_identity' },
+  { mode: 'Inference', question: '"What patterns hold across these memories?"', tool: 'velixar_patterns' },
+  { mode: 'Stewardship', question: '"Will future sessions need this work?"', tool: 'velixar_store' },
 ] as const;
 
 export function renderModesTable(): string {
@@ -584,6 +587,82 @@ Output form:
   }],
 };
 
+// ── Group 7: Stewardship ──
+// The "recall first, store after, verify the store" discipline contract.
+// Spec: RECALL-FIRST-MODE-TASKS.md (incl. 7-Whys forward analysis R1-R7).
+
+const recall_first: WorkflowPrompt = {
+  name: 'recall_first',
+  description: 'Stewardship workflow. Use BEFORE finalizing any non-trivial code change, decision, or design that future sessions will need. Enforces a recall → act → persist → verify loop.',
+  version: '1.0.0',
+  arguments: [
+    { name: 'intent', description: 'One-line description of what you are about to do.', required: true },
+  ],
+  messages: [{
+    role: 'user',
+    content: `You are operating in Stewardship mode for this task.
+
+Intent: {{intent}}
+
+This is the recall_first contract. Honor all four phases in order. None are optional.
+
+## Phase 1 — RECALL (before acting)
+
+Query velixar memory for any prior decision, hardening row, incident, or constraint that bears on this work.
+
+- Use velixar_context for broad orientation, or velixar_search for a specific topic.
+- Run multiple narrow queries SEQUENTIALLY, not in parallel — parallel batched queries can trip auth-failure rate limits and produce silent partial failures.
+- Capture the substance of what you found.
+
+## Phase 2 — ACT (perform the change)
+
+Do the work: write code, propose the design, update infra. Local-only; nothing committed yet.
+
+- Required: explicitly cite at least one recalled fact from Phase 1, OR explicitly state "no prior context found relevant to this change" if your recall returned nothing material.
+- This requirement exists because recall without engagement is theater. The point of recall is to surface conflicts before acting; if the LLM dismisses what it found, the contract failed.
+
+## Phase 3 — PERSIST (substantive store)
+
+Store a substantive summary of the change to velixar memory.
+
+- Use velixar_store SEQUENTIALLY (not parallel). Batched parallel stores have a documented partial-success failure mode where only the first call lands.
+- Tag the memory with the work's domain (e.g. session-YYYY-MM-DD plus topic plus layer-or-component).
+- Reference the recalled context from Phase 1 in the stored summary so future sessions can audit the lineage.
+
+## Phase 4 — VERIFY (read back)
+
+Confirm the store actually persisted. Do not trust the store-tool's success response alone — past incidents include WAF rejections silently dropping stores while the response said 200.
+
+- Verify via velixar_search for a distinctive 3+ word phrase from the stored content (vector-search hot path, synchronous), OR via velixar_inspect by ID (direct lookup, definitely synchronous).
+- Do NOT verify via KG or entity lookups — those are async-indexed and will false-fail at T+0s.
+- If verification returns no hits, retry once with a 2-second backoff. If still empty, treat it as a real persistence failure: re-store, log to local auto-memory, and surface the incident before continuing.
+
+## When to use this workflow
+
+USE WHEN:
+- Non-trivial code change (multi-file edit, security-touching, infra-touching, deploy-affecting)
+- Architectural decision or design doc
+- Incident response, hardening work, post-migration follow-up
+- Anything the user describes with words like "remember this for next time" or "future sessions"
+
+DO NOT USE WHEN:
+- Trivial lookups (grep, ls, single-file reads)
+- Conversational turns without code or design output
+- Pure read-only commands
+- One-shot ad-hoc explanations
+
+## Stop conditions
+
+- Phase 1 returns nothing relevant → state that explicitly in Phase 2; do not skip the citation step.
+- Phase 4 fails twice → STOP. Surface the persistence failure to the user. Do not silently proceed.
+- The work outgrows a single store (multi-day project) → use recall_first per logical unit of progress; aggregate stores at session-end via distill_session.
+
+References:
+- velixar-mcp-server/RECALL-FIRST-MODE-TASKS.md (spec + 7-Whys forward analysis)
+- Cognitive constitution at velixar://constitution`,
+  }],
+};
+
 // ── Export ──
 
 export const allPrompts: WorkflowPrompt[] = [
@@ -612,6 +691,8 @@ export const allPrompts: WorkflowPrompt[] = [
   // Group 6: Enterprise
   org_knowledge_review,
   evaluate_product_fit,
+  // Group 7: Stewardship
+  recall_first,
 ];
 
 export function getPromptList() {
