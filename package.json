@@ -1,6 +1,6 @@
 {
   "name": "velixar-mcp-server",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "MCP server for Velixar persistent cognitive context — memory, identity, graph, time, and contradiction for LLMs",
   "type": "module",
   "bin": {
