@@ -7,14 +7,15 @@ import { wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
 import { getTimings, getRetryStats, getCircuitState, getRateLimitInfo } from '../api.js';
 import { getErrorRegistry } from '../errors.js';
+// Derived from package.json, never typed by hand. This used to be a literal
+// '0.5.0' while the package shipped as 1.2.0 and serverInfo claimed 1.1.0.
+import { VERSION } from '../version.js';
 
 // H1.4/Chain 8: Track whether backend capabilities have been verified
 let _capabilitiesVerified = false;
 
 export function setCapabilitiesVerified(v: boolean): void { _capabilitiesVerified = v; }
 export function isCapabilitiesVerified(): boolean { return _capabilitiesVerified; }
-
-const VERSION = '0.5.0';
 
 // Build 7.1: Audit log — in-memory ring buffer of recent tool calls
 interface AuditEntry {

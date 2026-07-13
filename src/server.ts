@@ -15,6 +15,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { loadConfig, ApiClient, log, setClientRoots, validateWorkspace } from './api.js';
+import { VERSION } from './version.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
 import { systemTools, handleSystemTool, recordAudit } from './tools/system.js';
 import { setCapabilitiesVerified } from './tools/system.js';
@@ -125,7 +126,7 @@ const systemToolNames = new Set(systemTools.map(t => t.name));
 const serverName = process.env.VELIXAR_MCP_SERVER_NAME || 'velixar-mcp-server';
 
 const server = new Server(
-  { name: serverName, version: '1.1.0' },
+  { name: serverName, version: VERSION },
   { capabilities: { tools: {}, resources: {}, prompts: {} } },
 );
 
