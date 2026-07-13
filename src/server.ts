@@ -16,6 +16,8 @@ import {
 
 import { loadConfig, ApiClient, log, setClientRoots, validateWorkspace } from './api.js';
 import { VERSION } from './version.js';
+import { setClientSlug } from './api.js';
+import { resolveClient } from './client_id.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
 import { systemTools, handleSystemTool, recordAudit } from './tools/system.js';
 import { setCapabilitiesVerified } from './tools/system.js';
@@ -155,6 +157,16 @@ fetchRecall(api, config); // non-blocking startup
 
 // Capture client roots for workspace cross-validation
 server.oninitialized = async () => {
+  // The handshake tells us WHICH host we are running inside. The server always
+  // knew this and never told the API, which is why a tool actively using Velixar
+  // could still show as not-connected on the dashboard.
+  try {
+    const info = server.getClientVersion();
+    const slug = resolveClient(info?.name);
+    setClientSlug(slug);
+    log('info', 'client_identified', { client: info?.name ?? 'unknown', slug: slug ?? 'unmapped' });
+  } catch { /* identity is a nicety, never a blocker */ }
+
   try {
     const rootsResult = await server.listRoots();
     if (rootsResult?.roots?.length) {

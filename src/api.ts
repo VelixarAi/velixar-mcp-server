@@ -42,6 +42,14 @@ function resolveWorkspace(): { id: string; source: ApiConfig['workspaceSource'] 
 // ── Workspace Cross-Validation ──
 
 let clientRoots: string[] = [];
+
+// Who is driving us (set once at MCP initialize). Sent on every request so the
+// backend can mark the right connector "connected" from REAL traffic instead of
+// waiting for someone to click a tile. Null = unknown; we then send no header at
+// all rather than guess.
+let clientSlug: string | null = null;
+export function setClientSlug(slug: string | null): void { clientSlug = slug; }
+export function getClientSlug(): string | null { return clientSlug; }
 let lastSeenWorkspaceId: string | null = null; // H4: Track workspace changes mid-session
 
 export function setClientRoots(roots: Array<{ uri: string; name?: string }>): void {
@@ -287,6 +295,7 @@ export class ApiClient {
           headers: {
             authorization: `Bearer ${this.config.apiKey}`,
             'Content-Type': 'application/json',
+            ...(clientSlug ? { 'X-Velixar-Client': clientSlug } : {}),
             ...(fetchOptions.headers as Record<string, string> || {}),
           },
         });
