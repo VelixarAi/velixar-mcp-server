@@ -293,7 +293,11 @@ export type AbsenceReason =
 export interface ApiConfig {
   apiKey: string;
   apiBase: string;
-  userId: string;
+  /** Explicit end-user identity (VELIXAR_USER_ID). Undefined = let the backend
+   *  derive scope from the API key's creator — the correct default. The server
+   *  must NEVER invent one: the "mcp-user" placeholder split every install into
+   *  a parallel memory universe invisible from the dashboard. */
+  userId?: string;
   workspaceId: string;
   workspaceSource: 'env' | 'git' | 'config' | 'none';
   timeoutMs: number;

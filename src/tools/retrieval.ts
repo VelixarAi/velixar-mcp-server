@@ -4,7 +4,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
-import { normalizeMemory, wrapResponse } from '../api.js';
+import { normalizeMemory, userParams, withUser, wrapResponse } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { validateSearchResponse } from '../validate.js';
 import { validateMultiSearchResponse, validateNeighborhoodResponse, validateCoverageResponse } from '../validate_retrieval.js';
@@ -90,9 +90,9 @@ export async function handleRetrievalTool(
     let perQueryResults: Array<{ query: string; memories: MemoryItem[] }>;
 
     try {
-      const raw = await api.post<unknown>('/memory/multi_search', {
-        queries, limit_per_query: limit, user_id: config.userId,
-      });
+      const raw = await api.post<unknown>('/memory/multi_search', withUser(config, {
+        queries, limit_per_query: limit,
+      }));
       const validated = validateMultiSearchResponse(raw, '/memory/multi_search');
       perQueryResults = validated.results.map((r, i) => ({
         query: queries[i] || r.query, // H3.5: preserve input order
@@ -105,7 +105,7 @@ export async function handleRetrievalTool(
     } catch {
       const results = await Promise.allSettled(
         queries.map(q => {
-          const params = new URLSearchParams({ q, user_id: config.userId, limit: String(limit) });
+          const params = userParams(config, { q, limit: String(limit) });
           return api.get<unknown>(`/memory/search?${params}`, true);
         }),
       );
@@ -195,7 +195,7 @@ export async function handleRetrievalTool(
         if (!memData) throw new Error(`Memory ${memoryId} not found`);
 
         const content = String(memData.content || '');
-        const params = new URLSearchParams({ q: content.slice(0, 200), user_id: config.userId, limit: String(limit + excludeIds.length + 11) });
+        const params = userParams(config, { q: content.slice(0, 200), limit: String(limit + excludeIds.length + 11) });
         const searchRaw = await api.get<unknown>(`/memory/search?${params}`, true);
         const validated = validateSearchResponse(searchRaw, '/memory/search');
         const excludeSet = new Set([memoryId, ...excludeIds]);
@@ -269,7 +269,7 @@ export async function handleRetrievalTool(
     // Build 2.4: auto_retrieve — run internal search if no memory_ids provided
     let autoRetrievedMemories: MemoryItem[] | undefined;
     if (autoRetrieve && memoryIds.length === 0) {
-      const params = new URLSearchParams({ q: topic, user_id: config.userId, limit: '15' });
+      const params = userParams(config, { q: topic, limit: '15' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       autoRetrievedMemories = validated.memories.map(m => {
@@ -327,7 +327,7 @@ export async function handleRetrievalTool(
       };
     } catch {
       // Fallback: broad search + set difference
-      const params = new URLSearchParams({ q: topic, user_id: config.userId, limit: '20' });
+      const params = userParams(config, { q: topic, limit: '20' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       const allRelevant = validated.memories.map(m => {

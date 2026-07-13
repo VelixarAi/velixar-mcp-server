@@ -3,6 +3,7 @@
 // activity patterns, LLM-generated personas instead of templates.
 
 import type { ApiClient } from '../api.js';
+import { userParams } from '../api.js';
 import type { ApiConfig } from '../types.js';
 import { validateSearchResponse } from '../validate.js';
 
@@ -120,7 +121,7 @@ async function searchWorkspace(
 
   const fetches = await Promise.allSettled(
     queries.map(q => {
-      const params = new URLSearchParams({ q, user_id: config.userId, limit: '10' });
+      const params = userParams(config, { q, limit: '10' });
       return api.get<unknown>(`/memory/search?${params}`, true);
     }),
   );

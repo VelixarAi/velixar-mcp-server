@@ -108,12 +108,32 @@ export function loadConfig(): ApiConfig {
   return {
     apiKey,
     apiBase: process.env.VELIXAR_API_URL || 'https://api.velixarai.com',
-    userId: process.env.VELIXAR_USER_ID || 'mcp-user',
+    // No default. Sending an invented identity ("mcp-user") on every call made
+    // the backend fence each MCP install into its own memory universe the moment
+    // user filters became airtight. Absent, the backend resolves scope from the
+    // key's creator and their workspace role — reads see what the dashboard sees.
+    userId: process.env.VELIXAR_USER_ID || undefined,
     workspaceId: ws.id,
     workspaceSource: ws.source,
     timeoutMs: 30_000,
     debug: process.env.VELIXAR_DEBUG === 'true',
   };
+}
+
+// ── User Scoping ──
+// Every read/write goes through one of these two, so "send user_id only when
+// the operator explicitly set one" is decided in exactly one place.
+
+/** Query params with user_id included only when explicitly configured. */
+export function userParams(config: ApiConfig, extra: Record<string, string> = {}): URLSearchParams {
+  const p = new URLSearchParams(extra);
+  if (config.userId) p.set('user_id', config.userId);
+  return p;
+}
+
+/** Request body with user_id included only when explicitly configured. */
+export function withUser(config: ApiConfig, body: Record<string, unknown>): Record<string, unknown> {
+  return config.userId ? { user_id: config.userId, ...body } : body;
 }
 
 // ── Structured Logging ──

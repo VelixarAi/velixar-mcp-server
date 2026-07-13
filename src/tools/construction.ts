@@ -6,7 +6,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
 import type { ApiClient } from '../api.js';
-import { normalizeMemory, wrapResponse } from '../api.js';
+import { normalizeMemory, userParams, wrapResponse } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { validateSearchResponse } from '../validate.js';
 import { validateCoverageResponse } from '../validate_retrieval.js';
@@ -141,7 +141,7 @@ export async function handleConstructionTool(
       const searchResults = await Promise.race([
         Promise.allSettled(
           angles.map(q => {
-            const params = new URLSearchParams({ q, user_id: config.userId, limit: '10' });
+            const params = userParams(config, { q, limit: '10' });
             return api.get<unknown>(`/memory/search?${params}`, true);
           }),
         ),
@@ -356,7 +356,7 @@ export async function handleConstructionTool(
       const additionalBudget = Math.min(act.budget || 1000, 2000);
       let newMemories: MemoryItem[] = [];
 
-      const params = new URLSearchParams({ q: act.target, user_id: config.userId, limit: '10' });
+      const params = userParams(config, { q: act.target, limit: '10' });
       try {
         const raw = await api.get<unknown>(`/memory/search?${params}`, true);
         const validated = validateSearchResponse(raw, '/memory/search');

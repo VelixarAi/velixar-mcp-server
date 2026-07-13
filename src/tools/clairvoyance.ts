@@ -5,7 +5,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
 import type { ApiClient } from '../api.js';
-import { wrapResponse } from '../api.js';
+import { userParams, withUser, wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
 import { validateSearchResponse } from '../validate.js';
 import { generatePersonas } from '../simulation/personas.js';
@@ -134,7 +134,7 @@ export async function handleClairvoyanceTool(
     let coverageRatio = 0;
     let seedMemoryCount = 0;
     try {
-      const params = new URLSearchParams({ q: question, user_id: config.userId, limit: '20' });
+      const params = userParams(config, { q: question, limit: '20' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       seedMemoryCount = validated.memories.length;
@@ -161,25 +161,23 @@ export async function handleClairvoyanceTool(
 
     // Step 5: Store prediction as hypothesis memory (H4.2: inline disclaimer)
     try {
-      await api.post('/memory', {
+      await api.post('/memory', withUser(config, {
         content: report.prediction,
-        user_id: config.userId,
         tier: 2,
         tags: ['clairvoyance', 'prediction', 'active', simulationId],
         source_type: 'clairvoyance',
-      });
+      }));
     } catch { /* non-blocking */ }
 
     // Step 6: Store simulation insight (Chain 11: escapes quarantine)
     try {
       const insightContent = `${report.badge} Simulation ${simulationId}: "${question}" → ${result.emergentConsensus} (confidence: ${report.confidenceRange.low}-${report.confidenceRange.high}). Key factors: ${report.keyFactors.slice(0, 2).join('; ')}`;
-      await api.post('/memory', {
+      await api.post('/memory', withUser(config, {
         content: insightContent,
-        user_id: config.userId,
         tier: 2,
         tags: ['clairvoyance', 'simulation-insight', simulationId],
         source_type: 'clairvoyance',
-      });
+      }));
     } catch { /* non-blocking */ }
 
     // Step 7: Log billing event
@@ -248,7 +246,7 @@ export async function handleClairvoyanceTool(
 
         let coverageRatio = 0, seedMemoryCount = 0;
         try {
-          const params = new URLSearchParams({ q: question, user_id: config.userId, limit: '20' });
+          const params = userParams(config, { q: question, limit: '20' });
           const raw = await api.get<unknown>(`/memory/search?${params}`, true);
           const validated = validateSearchResponse(raw, '/memory/search');
           seedMemoryCount = validated.memories.length;
@@ -301,7 +299,7 @@ export async function handleClairvoyanceTool(
 
     // Search for relevant memories
     try {
-      const params = new URLSearchParams({ q: question, user_id: config.userId, limit: '10' });
+      const params = userParams(config, { q: question, limit: '10' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       for (const m of validated.memories) {
@@ -312,7 +310,7 @@ export async function handleClairvoyanceTool(
     // Check for existing predictions on this topic
     let existingPrediction: string | null = null;
     try {
-      const params = new URLSearchParams({ q: `prediction ${question}`, user_id: config.userId, limit: '3', tags: 'clairvoyance,prediction' });
+      const params = userParams(config, { q: `prediction ${question}`, limit: '3', tags: 'clairvoyance,prediction' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       if (validated.memories.length > 0) {

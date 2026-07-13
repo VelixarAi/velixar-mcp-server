@@ -5,6 +5,7 @@
 //   velixar://system/constitution — cognitive behavioral constitution
 
 import type { ApiClient } from './api.js';
+import { userParams, withUser } from './api.js';
 import type { ApiConfig } from './types.js';
 import { COGNITIVE_MODES, renderModesTable } from './prompts.js';
 
@@ -97,7 +98,7 @@ export async function fetchRecall(api: ApiClient, config: ApiConfig): Promise<vo
   if (process.env.VELIXAR_AUTO_RECALL !== 'false') {
     const limit = parseInt(process.env.VELIXAR_RECALL_LIMIT || '10', 10);
     promises.push(
-    api.get<unknown>(`/memory/list?user_id=${config.userId}&limit=${limit}`, true,
+    api.get<unknown>(`/memory/list?${userParams(config, { limit: String(limit) })}`, true,
     ).then(r => {
       const rObj = (r && typeof r === 'object') ? r as Record<string, unknown> : {};
       _memories = Array.isArray(rObj.memories) ? rObj.memories as MemoryRecord[] : [];
@@ -118,9 +119,8 @@ export async function fetchRecall(api: ApiClient, config: ApiConfig): Promise<vo
   );
 
   // Relevant memories (proactive)
-  const relevantParams = new URLSearchParams({
+  const relevantParams = userParams(config, {
     q: 'important recent context',
-    user_id: config.userId,
     limit: '10',
   });
   promises.push(
@@ -148,9 +148,8 @@ export function refreshIdentity(api: ApiClient): void {
 }
 
 export function refreshRelevantMemories(api: ApiClient, config: ApiConfig): void {
-  const params = new URLSearchParams({
+  const params = userParams(config, {
     q: 'important recent context',
-    user_id: config.userId,
     limit: '10',
   });
   api.get<unknown>(`/memory/search?${params}`, true)

@@ -5,7 +5,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
-import { normalizeMemory, wrapResponse } from '../api.js';
+import { getClientSlug, normalizeMemory, userParams, withUser, wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
 import { validateStoreResponse, validateSearchResponse, validateListResponse, validateMutationResponse } from '../validate.js';
 
@@ -15,7 +15,7 @@ const _warnedParams = new Set<string>();
 // H6.1/Chain 9: _baseFilter — single source of truth for building search/list query params
 // All retrieval handlers must use this instead of constructing URLSearchParams directly.
 export function _baseFilter(config: ApiConfig, args: Record<string, unknown>): URLSearchParams {
-  const params = new URLSearchParams({ user_id: config.userId });
+  const params = userParams(config, {  });
   if (args.limit) params.set('limit', String(args.limit));
   if (args.tags) params.set('tags', (args.tags as string[]).join(','));
   if (args.before) params.set('before', args.before as string);
@@ -132,7 +132,7 @@ export async function handleMemoryTool(
         const content = args.content as string;
         // Skip dedup for very long content (embedding token limit)
         if (content.length < 25000) {
-          const searchParams = new URLSearchParams({ q: content.slice(0, 500), user_id: config.userId, limit: '1' });
+          const searchParams = userParams(config, { q: content.slice(0, 500), limit: '1' });
           const searchRaw = await api.get<unknown>(`/memory/search?${searchParams}`, false);
           const searchResult = validateSearchResponse(searchRaw, '/memory/search');
           if (searchResult.memories.length > 0) {
@@ -154,16 +154,15 @@ export async function handleMemoryTool(
     }
 
     // Build 1.2: Provenance params
-    const storeBody: Record<string, unknown> = {
+    const storeBody: Record<string, unknown> = withUser(config, {
       content: args.content,
-      user_id: config.userId,
       tier: (args.tier as number) ?? 2,
       tags: (args.tags as string[]) || [],
-      author: { type: 'agent', agent_id: config.userId },
+      author: { type: 'agent', agent_id: config.userId ?? getClientSlug() ?? 'mcp' },
       source_type: (args.source as string) || 'mcp_store',
       quarantine_zone: (args.quarantine_zone as string) || null,
       no_chunk: args.atomic === true,
-    };
+    });
     if (args.source_ids) storeBody.previous_memory_id = (args.source_ids as string[])[0] || null;
 
     const raw = await api.post<unknown>('/memory', storeBody);
@@ -233,7 +232,7 @@ export async function handleMemoryTool(
   if (name === 'velixar_update') {
     const memoryId = (args.memory_id || args.id) as string;
     if (!memoryId) throw new Error('memory_id or id required');
-    const body: Record<string, unknown> = { user_id: config.userId };
+    const body: Record<string, unknown> = withUser(config, {});
     if (args.content) body.content = args.content;
     if (args.tags) body.tags = args.tags;
     const raw = await api.patch<unknown>(`/memory/${memoryId}`, body);
@@ -254,7 +253,7 @@ export async function handleMemoryTool(
       const results: Array<{ id: string; status: string }> = [];
       for (const mid of targetIds) {
         try {
-          const body = { user_id: config.userId, archived: true };
+          const body = withUser(config, { archived: true });
           await api.patch<unknown>(`/memory/${mid}`, body);
           results.push({ id: mid, status: 'archived' });
         } catch {

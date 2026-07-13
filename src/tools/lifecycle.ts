@@ -5,7 +5,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { createHash } from 'node:crypto';
 import type { ApiClient } from '../api.js';
-import { normalizeMemory, wrapResponse } from '../api.js';
+import { getClientSlug, normalizeMemory, userParams, withUser, wrapResponse } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { validateSearchResponse, validateListResponse } from '../validate.js';
 
@@ -289,9 +289,8 @@ export async function handleLifecycleTool(
 
     if (!duplicateDetected) {
       try {
-        const searchParams = new URLSearchParams({
+        const searchParams = userParams(config, {
           q: content.slice(0, 200),
-          user_id: config.userId,
           limit: '3',
         });
         const existing = await api.get<unknown>(
@@ -365,14 +364,13 @@ export async function handleLifecycleTool(
     }
 
     // Store as semantic memory
-    const result = await api.post<{ id?: string; error?: string }>('/memory', {
+    const result = await api.post<{ id?: string; error?: string }>('/memory', withUser(config, {
       content,
-      user_id: config.userId,
       tier: 2,
       tags,
-      author: { type: 'distill', agent_id: config.userId },
+      author: { type: 'distill', agent_id: config.userId ?? getClientSlug() ?? 'mcp' },
       source_type: 'mcp_distill',
-    });
+    }));
 
     if (result.error) throw new Error(result.error);
 
@@ -412,28 +410,26 @@ export async function handleLifecycleTool(
     const sessionId = (args.session_id as string) || `session-${Date.now()}`;
     const tags = [...((args.tags as string[]) || []), 'session', `session:${sessionId}`];
 
-    const result = await api.post<{ id?: string; error?: string }>('/memory', {
+    const result = await api.post<{ id?: string; error?: string }>('/memory', withUser(config, {
       content: `[Session ${sessionId}] ${summary}`,
-      user_id: config.userId,
       tier: 2,
       tags,
       author: { type: 'agent', session_id: sessionId },
       source_type: 'mcp_session',
-    });
+    }));
 
     if (result.error) throw new Error(result.error);
 
     // M27: Dual session storage — also store a compact summary version for session_resume
     const compactSummary = summary.length > 500 ? summary.slice(0, 500) + '…' : summary;
     try {
-      await api.post('/memory', {
+      await api.post('/memory', withUser(config, {
         content: `[Session ${sessionId} summary] ${compactSummary}`,
-        user_id: config.userId,
         tier: 2,
         tags: [...tags, 'session_summary'],
         author: { type: 'agent', session_id: sessionId },
         source_type: 'mcp_session',
-      });
+      }));
     } catch { /* non-blocking — raw is the primary */ }
 
     return { text: JSON.stringify(wrapResponse({ session_id: sessionId, stored_id: result.id, tags, dual_stored: true }, config)) };
@@ -459,7 +455,7 @@ export async function handleLifecycleTool(
       const rObj = (result && typeof result === 'object') ? result as Record<string, unknown> : {};
       rawMemories = Array.isArray(rObj.memories) ? rObj.memories : [];
     } else {
-      const params = new URLSearchParams({ q: `session ${topic}`, user_id: config.userId, limit: String(limit) });
+      const params = userParams(config, { q: `session ${topic}`, limit: String(limit) });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       rawMemories = validated.memories as unknown as Array<Record<string, unknown>>;
@@ -568,7 +564,7 @@ export async function handleLifecycleTool(
     } else {
       // Search for session-tagged memories
       const q = topic ? `session ${topic}` : 'session';
-      const params = new URLSearchParams({ q, user_id: config.userId, limit: '50' });
+      const params = userParams(config, { q, limit: '50' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       memories = validated.memories as unknown as Array<Record<string, unknown>>;
@@ -760,7 +756,7 @@ export async function handleLifecycleTool(
         // For batch_store, do a lightweight similarity check
         let similarWarning: string | undefined;
         try {
-          const searchParams = new URLSearchParams({ q: item.content.slice(0, 200), user_id: config.userId, limit: '1' });
+          const searchParams = userParams(config, { q: item.content.slice(0, 200), limit: '1' });
           const searchRaw = await api.get<unknown>(`/memory/search?${searchParams}`, false);
           const searchResult = validateSearchResponse(searchRaw, '/memory/search');
           if (searchResult.memories.length > 0 && (searchResult.memories[0].score ?? 0) >= 0.95) {
@@ -768,14 +764,13 @@ export async function handleLifecycleTool(
           }
         } catch { /* non-blocking */ }
 
-        const res = await api.post<{ id?: string; error?: string }>('/memory', {
+        const res = await api.post<{ id?: string; error?: string }>('/memory', withUser(config, {
           content: item.content,
-          user_id: config.userId,
           tier: item.tier ?? 2,
           tags: item.tags || autoTags(item.content),
           author: { type: 'user' },
           source_type: 'mcp_batch',
-        });
+        }));
         if (res.id) recordIdempotency(config.workspaceId, item.content, res.id);
         return { id: res.id, status: 'stored' as const, similar_warning: similarWarning };
       }),
@@ -834,7 +829,7 @@ export async function handleLifecycleTool(
         }
       }
     } else if (topic) {
-      const params = new URLSearchParams({ q: topic, user_id: config.userId, limit: '10' });
+      const params = userParams(config, { q: topic, limit: '10' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       candidates = validated.memories.map(m => ({
@@ -874,13 +869,12 @@ export async function handleLifecycleTool(
     }
 
     // Store consolidated semantic memory
-    const stored = await api.post<{ id?: string; error?: string }>('/memory', {
+    const stored = await api.post<{ id?: string; error?: string }>('/memory', withUser(config, {
       content: summary.slice(0, 4000),
-      user_id: config.userId,
       tier: 2,
       tags: allTags,
       author: { type: 'pipeline' },
-    });
+    }));
 
     if (stored.error) throw new Error(stored.error);
 
@@ -945,7 +939,7 @@ export async function handleLifecycleTool(
 
     let memories: Array<Record<string, unknown>> = [];
     if (query) {
-      const params = new URLSearchParams({ q: query, user_id: config.userId, limit: String(limit) });
+      const params = userParams(config, { q: query, limit: String(limit) });
       if (args.tags) params.set('tags', (args.tags as string[]).join(','));
       if (args.before) params.set('before', args.before as string);
       if (args.after) params.set('after', args.after as string);
@@ -954,7 +948,7 @@ export async function handleLifecycleTool(
       const validated = validateSearchResponse(raw, '/memory/search');
       memories = validated.memories as unknown as Array<Record<string, unknown>>;
     } else {
-      const params = new URLSearchParams({ user_id: config.userId, limit: String(limit) });
+      const params = userParams(config, { limit: String(limit) });
       if (args.tags) params.set('tags', (args.tags as string[]).join(','));
       if (args.before) params.set('before', args.before as string);
       if (args.after) params.set('after', args.after as string);
@@ -1025,30 +1019,27 @@ export async function handleLifecycleTool(
           if (conflictStrategy === 'skip') return { id: existingId, status: 'skipped_duplicate' as const };
           if (conflictStrategy === 'overwrite') {
             // Update existing memory with new content/tags
-            await api.patch<unknown>(`/memory/${existingId}`, {
+            await api.patch<unknown>(`/memory/${existingId}`, withUser(config, {
               content: item.content,
               tags: [...(item.tags || []), ...defaultTags],
-              user_id: config.userId,
-            });
+            }));
             return { id: existingId, status: 'overwritten' as const };
           }
           // merge: append tags to existing
           if (conflictStrategy === 'merge') {
-            await api.patch<unknown>(`/memory/${existingId}`, {
+            await api.patch<unknown>(`/memory/${existingId}`, withUser(config, {
               tags: [...(item.tags || []), ...defaultTags],
-              user_id: config.userId,
-            });
+            }));
             return { id: existingId, status: 'merged' as const };
           }
         }
-        const res = await api.post<{ id?: string; error?: string }>('/memory/store', {
+        const res = await api.post<{ id?: string; error?: string }>('/memory/store', withUser(config, {
           content: item.content,
           tags: [...(item.tags || []), ...defaultTags, ...(source ? [`source:${source}`] : [])],
           tier: item.tier ?? 2,
-          user_id: config.userId,
           source_type: 'mcp_import',
           source_file: source || undefined,
-        });
+        }));
         if (res.id) recordIdempotency(config.workspaceId, item.content, res.id);
         return { id: res.id, status: 'imported' as const };
       }),

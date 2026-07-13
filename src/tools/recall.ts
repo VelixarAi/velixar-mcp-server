@@ -4,7 +4,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
-import { normalizeMemory, wrapResponse } from '../api.js';
+import { normalizeMemory, userParams, wrapResponse } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { justify } from '../justify.js';
 import { validateSearchResponse, validateListResponse, validateOverviewResponse } from '../validate.js';
@@ -49,7 +49,7 @@ export async function handleRecallTool(
     const compact = args.compact !== false;
     const multiAngle = process.env.VELIXAR_CONTEXT_MULTI_ANGLE === 'true';
 
-    const listParams = new URLSearchParams({ user_id: config.userId, limit: '5' });
+    const listParams = userParams(config, { limit: '5' });
     const startMs = Date.now();
 
     // Build search queries — single or multi-angle based on feature flag
@@ -58,18 +58,18 @@ export async function handleRecallTool(
       const angles = [topic, `decisions about ${topic}`, `problems or issues with ${topic}`];
       const perAngleLimit = compact ? '3' : '5';
       searchPromises = angles.map(q => {
-        const p = new URLSearchParams({ q, user_id: config.userId, limit: perAngleLimit });
+        const p = userParams(config, { q, limit: perAngleLimit });
         return api.get<unknown>(`/memory/search?${p}`, true);
       });
     } else if (multiAngle && !topic) {
       const angles = ['important recent context', 'open decisions', 'unresolved issues'];
       searchPromises = angles.map(q => {
-        const p = new URLSearchParams({ q, user_id: config.userId, limit: compact ? '3' : '5' });
+        const p = userParams(config, { q, limit: compact ? '3' : '5' });
         return api.get<unknown>(`/memory/search?${p}`, true);
       });
     } else {
       const searchQ = topic || 'important recent context';
-      const params = new URLSearchParams({ q: searchQ, user_id: config.userId, limit: compact ? '5' : '10' });
+      const params = userParams(config, { q: searchQ, limit: compact ? '5' : '10' });
       searchPromises = [api.get<unknown>(`/memory/search?${params}`, true)];
     }
 

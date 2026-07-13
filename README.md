@@ -142,7 +142,7 @@ When a host doesn't support resources or prompts, the server degrades gracefully
 | `VELIXAR_API_KEY` | Yes | Your API key (starts with `vlx_`) |
 | `VELIXAR_WORKSPACE_ID` | No | Explicit workspace scope |
 | `VELIXAR_API_URL` | No | Custom API endpoint |
-| `VELIXAR_USER_ID` | No | User ID for memory scoping |
+| `VELIXAR_USER_ID` | No | Explicit end-user identity. Leave unset (recommended): the API derives scope from your key — you see your own memories, same as the dashboard. Set it only when one key serves multiple named end users |
 | `VELIXAR_DEBUG` | No | `true` for verbose logging |
 | `VELIXAR_LOG_FORMAT` | No | `json` for structured Datadog/CloudWatch logging |
 | `VELIXAR_HEALTH_PORT` | No | Port for HTTP health check endpoint |

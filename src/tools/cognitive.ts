@@ -3,7 +3,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
-import { normalizeMemory, wrapResponse } from '../api.js';
+import { normalizeMemory, userParams, withUser, wrapResponse } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { justify } from '../justify.js';
 import { validateIdentityResponse, validateSearchResponse } from '../validate.js';
@@ -96,7 +96,7 @@ export async function handleCognitiveTool(
       const field = args.field as string;
       if (!field) throw new Error('field required for delete');
       // Search for identity memories with this field tag, then delete them
-      const params = new URLSearchParams({ q: `[identity:${field}]`, user_id: config.userId, limit: '10' });
+      const params = userParams(config, { q: `[identity:${field}]`, limit: '10' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       const toDelete = validated.memories.filter(m =>
@@ -115,7 +115,7 @@ export async function handleCognitiveTool(
 
     // Build 4.1: list — return all stored identity field names
     if (action === 'list') {
-      const params = new URLSearchParams({ q: '[identity:', user_id: config.userId, limit: '50' });
+      const params = userParams(config, { q: '[identity:', limit: '50' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       const fields = new Set<string>();
@@ -137,7 +137,7 @@ export async function handleCognitiveTool(
     if (action === 'history') {
       const field = args.field as string;
       if (!field) throw new Error('field required for history');
-      const params = new URLSearchParams({ q: `[identity:${field}]`, user_id: config.userId, limit: '20' });
+      const params = userParams(config, { q: `[identity:${field}]`, limit: '20' });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
       const validated = validateSearchResponse(raw, '/memory/search');
       const history = validated.memories
@@ -165,13 +165,12 @@ export async function handleCognitiveTool(
 
       // Store as semantic memory tagged with identity field
       const content = `[identity:${field}] ${typeof value === 'string' ? value : JSON.stringify(value)}`;
-      await api.post('/memory', {
+      await api.post('/memory', withUser(config, {
         content,
-        user_id: config.userId,
         tier: 0, // pinned — identity is durable
         tags: ['identity', `identity:${field}`],
         author: { type: 'user' },
-      });
+      }));
 
       // H10: Track identity update
       _lastIdentityUpdate = Date.now();
@@ -252,12 +251,11 @@ export async function handleCognitiveTool(
         };
       } catch {
         // Fallback: store resolution as a memory linking the contradiction
-        await api.post('/memory', {
+        await api.post('/memory', withUser(config, {
           content: `[contradiction-resolved:${contradictionId}] ${resolution}`,
-          user_id: config.userId,
           tags: ['contradiction-resolution', `contradiction:${contradictionId}`],
           author: { type: 'user' },
-        });
+        }));
         return {
           text: JSON.stringify(wrapResponse(
             { action: 'resolve', contradiction_id: contradictionId, resolution, message: 'Resolution stored as memory (backend resolve endpoint unavailable)', _fallback: true },
@@ -381,7 +379,7 @@ export async function handleCognitiveTool(
 
       // H13: Search with expanded terms for better recall
       const searchQuery = expandedTerms.join(' OR ');
-      const params = new URLSearchParams({ q: searchQuery, user_id: config.userId, limit: String(limit) });
+      const params = userParams(config, { q: searchQuery, limit: String(limit) });
       const raw = await api.get<unknown>(`/memory/search?${params}`, true);
 
       // H13: Also fetch graph relationships for the entity
@@ -489,12 +487,11 @@ export async function handleCognitiveTool(
         await api.post('/patterns/dismiss', { pattern_id: patternId });
       } catch {
         // Fallback: store dismissal as memory
-        await api.post('/memory', {
+        await api.post('/memory', withUser(config, {
           content: `[pattern-dismissed:${patternId}]`,
-          user_id: config.userId,
           tags: ['pattern-dismissed', `pattern:${patternId}`],
           author: { type: 'user' },
-        });
+        }));
       }
       return {
         text: JSON.stringify(wrapResponse(
