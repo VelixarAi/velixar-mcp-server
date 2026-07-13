@@ -36,6 +36,17 @@ test('the server reports the published version to hosts', async () => {
   );
 });
 
+test('server.json agrees with package.json', () => {
+  // server.json is the MCP-registry manifest and SHIPS IN THE TARBALL, with two
+  // separate version fields. It is hand-maintained, so it is the same drift trap
+  // as the source literals were — and it is public.
+  const manifest = JSON.parse(readFileSync(new URL('../server.json', import.meta.url)));
+  assert.equal(manifest.version, pkg.version, 'server.json .version drifted');
+  for (const p of manifest.packages ?? []) {
+    assert.equal(p.version, pkg.version, `server.json packages[${p.identifier}].version drifted`);
+  }
+});
+
 test('no hand-typed server version literals in src', () => {
   // prompts.ts versions its PROMPTS independently (deliberate — a prompt's
   // version tracks its content, not the server's), so it is exempt.
