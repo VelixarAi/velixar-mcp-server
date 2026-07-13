@@ -1,14 +1,29 @@
 name: Publish to npm (trusted publishing)
 
-# OIDC trusted publishing: no npm token anywhere. npmjs.com is configured to
-# accept publishes ONLY from this repo + this workflow file. Provenance
-# attestation is generated automatically.
+# TWO auth paths, in preference order. Both produce a PROVENANCE ATTESTATION —
+# that is the property we actually care about, and it comes from `id-token: write`
+# plus `--provenance`, NOT from trusted publishing. People conflate the two.
+#
+#   1. OIDC trusted publishing (tokenless, preferred). npm exchanges the GitHub
+#      OIDC token for a short-lived publish credential. Nothing is stored.
+#   2. Granular automation token (fallback). An automation token BYPASSES 2FA,
+#      which is why it works unattended.
+#
+# We tried (1) alone and npm returned 404 on the token exchange -> ENEEDAUTH,
+# meaning the registry had no trusted-publisher record matching this repo +
+# workflow. GitHub's half was proven fine the whole time (it issued the id-token,
+# HTTP 200). So the workflow now uses the token WHEN ONE EXISTS and falls back to
+# pure OIDC when it does not — and either way the release is attested.
+#
+# registry-url is set ONLY on the token path: it writes an _authToken line into
+# .npmrc, which would override OIDC and break trusted publishing.
+
 on:
   push:
     tags: ["v*"]
 
 permissions:
-  id-token: write # OIDC token for npm trusted publishing
+  id-token: write # required for BOTH paths — this is what mints provenance
   contents: read
 
 jobs:
@@ -16,11 +31,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24 # bundles npm >= 11.5 (required for trusted publishing)
-          # NO registry-url here: it writes an _authToken line into .npmrc,
-          # which overrides OIDC and breaks trusted publishing (E404 on PUT).
+          registry-url: ${{ secrets.NPM_TOKEN != '' && 'https://registry.npmjs.org' || '' }}
+
       - run: npm ci
-      - run: npm test
-      - run: npm publish --loglevel http # prepublishOnly runs tsc; OIDC handles auth
+      - run: npm test # builds first; the version guard inspects dist/
+
+      - name: Publish (automation token — bypasses 2FA, still attested)
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        run: npm publish --provenance --access public --loglevel http
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish (OIDC trusted publishing — tokenless)
+        if: ${{ secrets.NPM_TOKEN == '' }}
+        run: npm publish --loglevel http # prepublishOnly runs tsc; OIDC handles auth
+
+      - name: Verify the published version reports itself correctly
+        # The whole reason 1.2.1 exists: the server used to tell hosts it was
+        # 1.1.0. Never ship that again without noticing.
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          sleep 15
+          PUBLISHED=$(npm view "velixar-mcp-server@$VERSION" version)
+          echo "package.json=$VERSION  registry=$PUBLISHED"
+          test "$VERSION" = "$PUBLISHED"
