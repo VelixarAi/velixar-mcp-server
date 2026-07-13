@@ -71,6 +71,16 @@ function trackToolCall(toolName: string): void {
 
 // ── Init ──
 
+// ── `install` subcommand ──────────────────────────────────────────────────────
+// Hand-editing claude_desktop_config.json was the worst step in onboarding: people
+// do not have the file, or they have it with other servers in it and paste over the
+// top, silently deleting someone else's MCP server. A config edit is a job for a
+// program, not a copy-paste instruction.
+if (process.argv[2] === 'install') {
+  const { runInstall } = await import('./install.js');
+  process.exit(await runInstall(process.argv.slice(3)));
+}
+
 const config = loadConfig();
 const api = new ApiClient(config);
 
