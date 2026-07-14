@@ -39,7 +39,7 @@ export const memoryTools: Tool[] = [
         tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags for categorization' },
         tier: { type: 'number', description: 'Memory tier: 0=pinned, 1=session, 2=semantic (default), 3=org' },
         quarantine_zone: { type: 'string', description: 'Optional quarantine zone ID. Memory will only be visible to zone members.' },
-        check_duplicate: { type: 'boolean', description: 'Check for near-duplicate before storing (default: false). Still stores regardless — warning is advisory.' },
+        check_duplicate: { type: 'boolean', description: 'Exact byte-duplicates are BLOCKED server-side (existing id returned, nothing written); near-duplicates above dedup_threshold warn but still store.' },
         dedup_threshold: { type: 'number', description: 'Similarity threshold for duplicate detection (default: 0.95). Only used when check_duplicate is true.' },
         source: { type: 'string', description: 'Provenance label (e.g., "user-stated", "derived-from-analysis")' },
         source_ids: { type: 'array', items: { type: 'string' }, description: 'Parent memory IDs for provenance linking' },
@@ -162,10 +162,21 @@ export async function handleMemoryTool(
       source_type: (args.source as string) || 'mcp_store',
       quarantine_zone: (args.quarantine_zone as string) || null,
       no_chunk: args.atomic === true,
+      // Server enforces EXACT-duplicate blocking (content_hash match returns
+      // the existing id, stored:false). The similarity search above stays as
+      // the ADVISORY near-duplicate layer — two different promises, both kept.
+      ...(args.check_duplicate ? { check_duplicate: true } : {}),
     });
     if (args.source_ids) storeBody.previous_memory_id = (args.source_ids as string[])[0] || null;
 
     const raw = await api.post<unknown>('/memory', storeBody);
+    const rawObj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+    if (rawObj.duplicate === true && rawObj.id) {
+      return { text: JSON.stringify(wrapResponse(
+        { id: String(rawObj.id), action: 'duplicate', message: 'Exact content already stored — existing id returned, nothing written.' },
+        config,
+      )) };
+    }
     const result = validateStoreResponse(raw, '/memory');
     const responseData: Record<string, unknown> = { id: result.id, action: 'stored' };
     if (similar_existing) responseData.similar_existing = similar_existing;

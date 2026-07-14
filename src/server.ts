@@ -467,4 +467,18 @@ if (httpPort > 0) {
   // ── Stdio transport (default, for local MCP clients) ──
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Die with the host. A stdio MCP server's lifetime IS its host's interest in it:
+  // when stdin closes (the host exited or dropped us) there is nobody left to
+  // answer, and a process that lingers anyway becomes a ZOMBIE — old code pinned
+  // in memory since the day it started, an old key in its env, failing auth
+  // against the API whenever it is poked. Seventeen of those accumulated on one
+  // machine (some three major versions behind the binary on disk) and their
+  // failures tripped the API's brute-force lockout, which presented as "auth
+  // failure spreading across endpoints" (2026-07-14). The lockout is now
+  // credential-scoped server-side, but the zombie should not exist at all.
+  process.stdin.on('end', () => process.exit(0));
+  process.stdin.on('close', () => process.exit(0));
+  process.on('SIGTERM', () => process.exit(0));
+  process.on('SIGINT', () => process.exit(0));
 }
