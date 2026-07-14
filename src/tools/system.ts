@@ -88,7 +88,8 @@ export const systemTools: Tool[] = [
   {
     name: 'velixar_audit_log',
     description:
-      'Query recent operations performed by Velixar. Returns tool name, timestamp, params summary, and result.',
+      'Query recent tool calls made by THIS MCP session (in-process diagnostics, volatile, completed calls only). ' +
+      'For the durable, hash-chained provenance trail pass durable:true — that queries the backend audit chain.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -96,6 +97,7 @@ export const systemTools: Tool[] = [
         tool_name: { type: 'string', description: 'Filter by tool name' },
         before: { type: 'string', description: 'ISO timestamp — only entries before this time' },
         after: { type: 'string', description: 'ISO timestamp — only entries after this time' },
+        durable: { type: 'boolean', description: 'Query the backend hash-chained audit trail instead of this session buffer' },
       },
     },
   },
@@ -226,6 +228,22 @@ export async function handleSystemTool(
   // Build 7.1: Audit log
   if (name === 'velixar_audit_log') {
     const limit = Math.min((args.limit as number) || 20, 100);
+
+    if (args.durable) {
+      // The REAL trail: the backend's hash-chained audit store. The local
+      // buffer below is session diagnostics — volatile, this process only,
+      // completed calls only — and presenting it as "the audit log" is how
+      // it got read as a 7-entry ring buffer undercutting provenance claims.
+      const qs = new URLSearchParams({ limit: String(limit) });
+      const raw = await api.get<unknown>(`/audit?${qs}`, false);
+      const rObj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+      return {
+        text: JSON.stringify(wrapResponse({
+          source: 'backend hash-chained audit trail',
+          ...rObj,
+        }, config)),
+      };
+    }
     const toolFilter = args.tool_name as string | undefined;
     const before = args.before as string | undefined;
     const after = args.after as string | undefined;
@@ -243,6 +261,7 @@ export async function handleSystemTool(
 
     return {
       text: JSON.stringify(wrapResponse({
+        source: 'this MCP session only — volatile in-process diagnostics; completed calls only (a hung call never lands here). For the durable provenance trail pass durable:true.',
         entries: entries.slice(0, limit),
         count: entries.length,
         total_in_buffer: AUDIT_LOG.length,

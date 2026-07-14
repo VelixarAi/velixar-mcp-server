@@ -209,6 +209,21 @@ export async function handleMemoryTool(
   if (name === 'velixar_list') {
     const params = _baseFilter(config, args);
     if (args.cursor) params.set('cursor', args.cursor as string);
+    if (args.count_only) {
+      // Ask the STORE for the count. Counting the returned page reported
+      // "count: 19" for a corpus of thousands — a page length wearing a
+      // count's name. Older backends without count_only 400 on the unknown
+      // param; fall through to the labeled page-count then.
+      params.set('count_only', 'true');
+      try {
+        const rawCount = await api.get<unknown>(`/memory/list?${params}`, false);
+        const c = (rawCount && typeof rawCount === 'object') ? rawCount as Record<string, unknown> : {};
+        if (c.count_only === true && typeof c.count === 'number') {
+          return { text: JSON.stringify(wrapResponse({ count: c.count }, config)) };
+        }
+      } catch { /* backend predates count_only — fall through */ }
+      params.delete('count_only');
+    }
     const raw = await api.get<unknown>(`/memory/list?${params}`, true);
     const result = validateListResponse(raw, '/memory/list');
     let items = result.memories.map(m => {
@@ -218,7 +233,8 @@ export async function handleMemoryTool(
     });
     if (args.memory_type) items = items.filter(m => m.memory_type === args.memory_type);
     if (args.count_only) {
-      return { text: JSON.stringify(wrapResponse({ count: items.length }, config)) };
+      return { text: JSON.stringify(wrapResponse(
+        { count: items.length, count_is: 'first page only — backend count unavailable' }, config)) };
     }
     return {
       text: JSON.stringify(wrapResponse(

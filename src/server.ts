@@ -238,13 +238,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Workspace cross-validation warning
     const wsWarning = validateWorkspace(config);
     let responseText = result.text;
-    if (wsWarning) {
-      try {
-        const parsed = JSON.parse(responseText);
-        parsed._workspace_warning = wsWarning;
-        responseText = JSON.stringify(parsed);
-      } catch { /* non-JSON response, skip */ }
-    }
+    try {
+      const parsed = JSON.parse(responseText);
+      // meta.request_ms was hardcoded 0 in makeMeta — a decorative field that
+      // under-reported multi-second calls as instant. Stamp the real elapsed
+      // time here, the one place every tool response passes through.
+      if (parsed && parsed.meta && typeof parsed.meta === 'object') {
+        parsed.meta.request_ms = Date.now() - start;
+      }
+      if (wsWarning) parsed._workspace_warning = wsWarning;
+      responseText = JSON.stringify(parsed);
+    } catch { /* non-JSON response, skip */ }
 
     // H1: Constitution fallback — inject compact constitution if host never read the resource
     const constitutionFallback = getConstitutionFallback();

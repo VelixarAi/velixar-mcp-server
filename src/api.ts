@@ -499,7 +499,9 @@ export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem
 
 export function makeMeta(config: ApiConfig, overrides: Partial<ResponseMeta> = {}): ResponseMeta {
   const meta: ResponseMeta = {
-    workspace_id: config.workspaceId,
+    // "" read as "workspace isolation is not active". The backend always
+    // scopes by the API key; when the client has no local resolution, SAY so.
+    workspace_id: config.workspaceId || '(scoped by API key)',
     confidence: 1,
     staleness: 'fresh',
     contradictions_present: false,

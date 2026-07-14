@@ -331,9 +331,15 @@ export async function handleCognitiveTool(
           conflict_summary: `${filtered.length} active contradiction${filtered.length !== 1 ? 's' : ''}, ${superseded.length} superseded (temporal updates)`,
           evidence: filtered,
           superseded,
+          // "No rows" must NEVER present as "beliefs are consistent": the
+          // detector's coverage is limited (and may be zero — the store is
+          // reader-complete but producer-less today). Absence of evidence,
+          // not evidence of absence. Fail-open epistemics on the product's
+          // headline differentiator is how a probe caught us asserting
+          // consistency at confidence 0.1.
           likely_interpretation: filtered.length > 0
             ? `${filtered.filter(i => i.severity === 'high').length} high-severity conflicts require attention`
-            : 'No active contradictions — beliefs are consistent',
+            : 'No contradictions recorded. Detection coverage is limited — do not treat this as proof of consistency.',
           next_step: filtered.length > 0
             ? 'Use velixar_inspect on linked memory IDs to understand each side, then velixar_timeline to trace belief evolution'
             : null,
