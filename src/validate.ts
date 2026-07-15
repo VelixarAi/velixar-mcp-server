@@ -45,6 +45,7 @@ export interface ValidatedRawMemory {
   created_at?: string;
   updated_at?: string;
   previous_memory_id?: string | null;
+  origin?: import('./types.js').MemoryOrigin;
 }
 
 export interface ValidatedStoreResult {
@@ -104,7 +105,16 @@ function validateRawMemory(m: unknown, endpoint: string): ValidatedRawMemory | n
     created_at: str(o.created_at),
     updated_at: str(o.updated_at),
     previous_memory_id: str(o.previous_memory_id) ?? null,
+    origin: validateOrigin(o.origin),
   };
+}
+
+/** Pass the backend's origin envelope through IF it has the right shape. */
+function validateOrigin(raw: unknown): import('./types.js').MemoryOrigin | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.client !== 'string' || typeof o.channel !== 'string') return undefined;
+  return { client: o.client, channel: o.channel, stamped: o.stamped === true };
 }
 
 export function validateStoreResponse(raw: unknown, endpoint: string): ValidatedStoreResult {

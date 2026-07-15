@@ -55,6 +55,14 @@ export interface Provenance {
   last_touched: string;
 }
 
+/** Which tool drove the write, over which pipe. `stamped: true` is a recorded
+ *  fact from the write path; false means the API derived it from evidence. */
+export interface MemoryOrigin {
+  client: string;   // claude_code | claude_desktop | cursor | … | web | velixar | unknown
+  channel: string;  // mcp | rest | web | internal
+  stamped: boolean;
+}
+
 export interface MemoryItem {
   id: string;
   workspace_id: string;
@@ -67,6 +75,7 @@ export interface MemoryItem {
   relevance?: number;
   confidence?: number;
   provenance: Provenance;
+  origin?: MemoryOrigin;
   contradiction_flags?: string[];
 }
 

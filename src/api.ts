@@ -4,7 +4,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ApiConfig, ApiTiming, MemoryItem, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
+import type { ApiConfig, ApiTiming, MemoryItem, MemoryOrigin, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
 import type { ValidatedRawMemory } from './validate.js';
 
 // ── Workspace Resolution ──
@@ -316,6 +316,11 @@ export class ApiClient {
             authorization: `Bearer ${this.config.apiKey}`,
             'Content-Type': 'application/json',
             ...(clientSlug ? { 'X-Velixar-Client': clientSlug } : {}),
+            // The channel is declared, not inferred: this process IS the MCP
+            // server, so every request it makes is mcp-channel by definition.
+            // (A REST script that wants client attribution sends its own
+            // X-Velixar-Client plus X-Velixar-Channel: rest.)
+            'X-Velixar-Channel': 'mcp',
             ...(fetchOptions.headers as Record<string, string> || {}),
           },
         });
@@ -464,6 +469,7 @@ interface RawMemory {
   updated_at?: string;
   previous_memory_id?: string | null;
   timestamp?: string;
+  origin?: MemoryOrigin;
 }
 
 function inferMemoryType(raw: RawMemory | ValidatedRawMemory): MemoryType {
@@ -494,6 +500,7 @@ export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem
       last_touched: raw.created_at || '',
       derived_from: raw.previous_memory_id ? [raw.previous_memory_id] : undefined,
     },
+    origin: raw.origin,
   };
 }
 
