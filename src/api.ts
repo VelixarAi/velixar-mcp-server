@@ -268,6 +268,8 @@ export class ApiClient {
   ): Promise<T> {
     const { cacheable, ...fetchOptions } = options;
     const cacheKey = `${path}:${JSON.stringify(fetchOptions.body || '')}`;
+    const method = ((fetchOptions.method as string) || 'GET').toUpperCase();
+    const isMutation = method !== 'GET' && method !== 'HEAD';
 
     // Check cache for GET-like requests
     if (cacheable) {
@@ -354,6 +356,10 @@ export class ApiClient {
 
         // Cache successful reads
         if (cacheable) setCache(cacheKey, data);
+        // A successful mutation makes every cached read suspect (an inspect
+        // after update/delete was serving the pre-mutation row for up to the
+        // full TTL) — drop them all so the next read refetches.
+        if (isMutation) cache.clear();
 
         recordCircuitSuccess();
         return data;
@@ -373,6 +379,10 @@ export class ApiClient {
 
     // All retries exhausted — record circuit failure
     recordCircuitFailure();
+
+    // A timed-out mutation may still have landed server-side — the outcome is
+    // unknown, so cached reads can't be trusted to outlive it.
+    if (isMutation) cache.clear();
 
     // Try cache fallback
     if (cacheable) {
