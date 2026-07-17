@@ -1,25 +1,87 @@
 {
   "_description": "S1: Maps each tool to the prompts that reference it. CI check: if a tool description changes, flag listed prompts for review.",
   "_version": "1.0.0",
-  "_updated": "2026-03-19",
+  "_updated": "2026-07-17",
   "tools": {
-    "velixar_context": ["recall_prior_reasoning", "build_project_context", "orient_then_narrow", "identify_knowledge_gaps", "resume_previous_session", "org_knowledge_review", "evaluate_product_fit"],
-    "velixar_search": ["recall_prior_reasoning", "orient_then_narrow", "trace_belief_evolution", "consolidate_topic_memory", "summarize_user_identity", "evaluate_product_fit"],
-    "velixar_graph_traverse": ["build_project_context", "profile_entity", "summarize_user_identity", "evaluate_product_fit"],
-    "velixar_timeline": ["recall_prior_reasoning", "trace_belief_evolution", "resolve_contradiction", "reconstruct_decision_path", "detect_preference_shift"],
-    "velixar_contradictions": ["resolve_contradiction", "identify_knowledge_gaps", "detect_preference_shift", "org_knowledge_review"],
-    "velixar_distill": ["distill_session"],
-    "velixar_batch_store": ["distill_session"],
-    "velixar_inspect": ["resolve_contradiction", "reconstruct_decision_path"],
-    "velixar_patterns": ["build_project_context", "org_knowledge_review", "evaluate_product_fit"],
-    "velixar_identity": ["build_project_context", "resolve_contradiction", "summarize_user_identity", "detect_preference_shift", "align_response_style"],
-    "velixar_session_resume": ["resume_previous_session"],
-    "velixar_session_recall": ["distill_session"],
+    "velixar_context": [
+      "recall_prior_reasoning",
+      "build_project_context",
+      "orient_then_narrow",
+      "identify_knowledge_gaps",
+      "resume_previous_session",
+      "org_knowledge_review",
+      "evaluate_product_fit"
+    ],
+    "velixar_search": [
+      "recall_prior_reasoning",
+      "orient_then_narrow",
+      "trace_belief_evolution",
+      "consolidate_topic_memory",
+      "summarize_user_identity",
+      "evaluate_product_fit"
+    ],
+    "velixar_graph_traverse": [
+      "build_project_context",
+      "profile_entity",
+      "summarize_user_identity",
+      "evaluate_product_fit"
+    ],
+    "velixar_timeline": [
+      "recall_prior_reasoning",
+      "trace_belief_evolution",
+      "resolve_contradiction",
+      "reconstruct_decision_path",
+      "detect_preference_shift"
+    ],
+    "velixar_contradictions": [
+      "resolve_contradiction",
+      "identify_knowledge_gaps",
+      "detect_preference_shift",
+      "org_knowledge_review"
+    ],
+    "velixar_distill": [
+      "distill_session"
+    ],
+    "velixar_batch_store": [
+      "distill_session"
+    ],
+    "velixar_inspect": [
+      "resolve_contradiction",
+      "reconstruct_decision_path"
+    ],
+    "velixar_patterns": [
+      "build_project_context",
+      "org_knowledge_review",
+      "evaluate_product_fit"
+    ],
+    "velixar_identity": [
+      "build_project_context",
+      "resolve_contradiction",
+      "summarize_user_identity",
+      "detect_preference_shift",
+      "align_response_style"
+    ],
+    "velixar_session_resume": [
+      "resume_previous_session"
+    ],
+    "velixar_session_recall": [
+      "distill_session"
+    ],
     "velixar_session_save": [],
-    "velixar_consolidate": ["consolidate_topic_memory"],
-    "velixar_retag": ["distill_session", "consolidate_topic_memory", "retag_recent_memories"],
-    "velixar_list": ["retag_recent_memories"],
-    "velixar_update": ["resolve_contradiction"],
+    "velixar_consolidate": [
+      "consolidate_topic_memory"
+    ],
+    "velixar_retag": [
+      "distill_session",
+      "consolidate_topic_memory",
+      "retag_recent_memories"
+    ],
+    "velixar_list": [
+      "retag_recent_memories"
+    ],
+    "velixar_update": [
+      "resolve_contradiction"
+    ],
     "velixar_store": [],
     "velixar_delete": [],
     "velixar_health": [],
@@ -32,13 +94,16 @@
     "velixar_discover_data": [],
     "velixar_list_sources": [],
     "velixar_query_source": [],
-    "velixar_multi_search": ["orient_then_narrow"],
+    "velixar_multi_search": [
+      "orient_then_narrow"
+    ],
     "velixar_search_neighborhood": [],
     "velixar_coverage_check": [],
     "velixar_graph_search": [],
     "velixar_graph_stats": [],
     "velixar_audit_log": [],
     "velixar_prepare_context": [],
-    "velixar_refine_context": []
+    "velixar_refine_context": [],
+    "velixar_lineage": []
   }
 }
