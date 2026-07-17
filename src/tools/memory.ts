@@ -42,7 +42,7 @@ export const memoryTools: Tool[] = [
         check_duplicate: { type: 'boolean', description: 'Exact byte-duplicates are BLOCKED server-side (existing id returned, nothing written); near-duplicates above dedup_threshold warn but still store.' },
         dedup_threshold: { type: 'number', description: 'Similarity threshold for duplicate detection (default: 0.95). Only used when check_duplicate is true.' },
         source: { type: 'string', description: 'Provenance label (e.g., "user-stated", "derived-from-analysis")' },
-        source_ids: { type: 'array', items: { type: 'string' }, description: 'Parent memory IDs for provenance linking' },
+        source_ids: { type: 'array', items: { type: 'string' }, description: 'DERIVATION lineage — the memory IDs this new memory was reasoned/built FROM (e.g. you learned context B from context A). An explicit, directed "derived-from" edge, DISTINCT from semantic similarity and from the temporal previous-memory chain. Omit for an origin memory (learned fresh, no prior context). Query the resulting graph with velixar_lineage.' },
         atomic: { type: 'boolean', description: 'Store as a single unit — never split into chunks. Use for poems, quotes, structured data that must stay whole.' },
       },
       required: ['content'],
@@ -167,7 +167,14 @@ export async function handleMemoryTool(
       // the ADVISORY near-duplicate layer — two different promises, both kept.
       ...(args.check_duplicate ? { check_duplicate: true } : {}),
     });
-    if (args.source_ids) storeBody.previous_memory_id = (args.source_ids as string[])[0] || null;
+    // Derivation lineage: source_ids are the memories this one was reasoned FROM.
+    // Send them ALL, to their own `references` field — NOT previous_memory_id (that
+    // is the temporal session chain, a different lineage). The prior code collapsed
+    // the whole derivation set into previous_memory_id[0], losing every id past the
+    // first and conflating "built on" with "came after".
+    if (Array.isArray(args.source_ids) && args.source_ids.length) {
+      storeBody.references = (args.source_ids as string[]).filter(Boolean);
+    }
 
     const raw = await api.post<unknown>('/memory', storeBody);
     const rawObj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};

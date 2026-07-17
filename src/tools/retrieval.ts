@@ -47,6 +47,24 @@ export const retrievalTools: Tool[] = [
     },
   },
   {
+    name: 'velixar_lineage',
+    description:
+      'Trace the DERIVATION lineage of a memory — the knowledge-building graph, NOT similarity. ' +
+      'Every edge was declared at store time via source_ids ("this memory was reasoned/built FROM those"). ' +
+      'This answers "what understanding did this come from, and what was built on it" — fundamentally different from velixar_search_neighborhood, which finds memories that merely resemble one another in vector space. ' +
+      'Upstream = ancestors (what it was built on); downstream = descendants (what was built on it). A memory with no ancestors is an origin (learned fresh). ' +
+      'Returns nodes (each with hop distance and is_origin) and directed child→parent edges.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        memory_id: { type: 'string', description: 'The memory whose derivation lineage to trace' },
+        direction: { type: 'string', enum: ['up', 'down', 'both'], description: 'up = what this was built on (ancestors); down = what was built on this (descendants); both (default)' },
+        depth: { type: 'number', description: 'How many derivation hops to walk (default 3, max 6)' },
+      },
+      required: ['memory_id'],
+    },
+  },
+  {
     name: 'velixar_coverage_check',
     description:
       'Check how well retrieved memories cover a topic. Returns coverage ratio, gaps, and suggested follow-up queries. ' +
@@ -69,6 +87,20 @@ export async function handleRetrievalTool(
   api: ApiClient,
   config: ApiConfig,
 ): Promise<{ text: string; isError?: boolean }> {
+
+  if (name === 'velixar_lineage') {
+    const memoryId = args.memory_id as string;
+    if (!memoryId) {
+      return { text: JSON.stringify({ error: 'memory_id is required' }), isError: true };
+    }
+    const direction = (args.direction as string) || 'both';
+    const depth = Math.min(Math.max((args.depth as number) || 3, 1), 6);
+    const params = new URLSearchParams({ memory_id: memoryId, direction, depth: String(depth) });
+    const raw = await api.get<unknown>(`/memory/lineage?${params}`, true);
+    const obj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+    const lineage = (obj.lineage as Record<string, unknown>) || obj;
+    return { text: JSON.stringify(wrapResponse(lineage, config)) };
+  }
 
   if (name === 'velixar_multi_search' || name === 'velixar_batch_search') {
     const queries = (args.queries as string[]).slice(0, 5); // H3.5: never reorder
