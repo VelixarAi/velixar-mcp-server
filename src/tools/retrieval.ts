@@ -297,9 +297,11 @@ export async function handleRetrievalTool(
       const temporalHealth = {
         stale_warning: false,
         evolution_detected: false,
-        suggestion: result.coverage_ratio >= 0.7
-          ? 'Coverage is adequate for synthesis.'
-          : `Coverage is ${Math.round(result.coverage_ratio * 100)}% — consider retrieving more context or explicitly declaring gaps.`,
+        suggestion: result.coverage_ratio === null
+          ? 'No relevant memories exist for this topic — coverage is UNKNOWN; do not synthesize from memory.'
+          : result.coverage_ratio >= 0.7
+            ? 'Coverage is adequate for synthesis.'
+            : `Coverage is ${Math.round(result.coverage_ratio * 100)}% — consider retrieving more context or explicitly declaring gaps.`,
       };
 
       // Build 2.4: structured gaps
@@ -315,11 +317,13 @@ export async function handleRetrievalTool(
           ...result,
           gaps: structuredGaps,
           temporal_health: temporalHealth,
-          confidence_assessment: result.coverage_ratio >= 0.8
-            ? 'high — most relevant context retrieved'
-            : result.coverage_ratio >= 0.5
-              ? 'medium — significant gaps remain'
-              : 'low — most relevant context not yet retrieved',
+          confidence_assessment: result.coverage_ratio === null
+            ? 'unknown — no relevant memories exist for this topic'
+            : result.coverage_ratio >= 0.8
+              ? 'high — most relevant context retrieved'
+              : result.coverage_ratio >= 0.5
+                ? 'medium — significant gaps remain'
+                : 'low — most relevant context not yet retrieved',
           ...(autoRetrievedMemories ? { auto_retrieved: autoRetrievedMemories, auto_retrieve_count: autoRetrievedMemories.length } : {}),
         }, config, {
           data_absent: result.total_relevant === 0,
@@ -339,7 +343,10 @@ export async function handleRetrievalTool(
       const retrievedSet = new Set(memoryIds);
       const covered = allRelevant.filter(m => retrievedSet.has(m.id));
       const uncovered = allRelevant.filter(m => !retrievedSet.has(m.id));
-      const ratio = allRelevant.length > 0 ? covered.length / allRelevant.length : 1;
+      // 0/0 is UNKNOWN, not "fully covered". The backend fix (v16) landed on the main
+      // path; this fallback kept the old inversion — zero relevant memories read as
+      // ratio 1.0 / confidence high, a hallucination trap. Mirror the backend contract.
+      const ratio = allRelevant.length > 0 ? covered.length / allRelevant.length : null;
 
       const structuredGaps = uncovered.slice(0, 10).map(m => ({
         subtopic: m.content.slice(0, 80),
@@ -353,13 +360,16 @@ export async function handleRetrievalTool(
           topic,
           total_relevant: allRelevant.length,
           retrieved_count: covered.length,
-          coverage_ratio: Math.round(ratio * 100) / 100,
+          coverage_ratio: ratio === null ? null : Math.round(ratio * 100) / 100,
+          coverage_status: allRelevant.length === 0 ? 'no_relevant_memories'
+            : ratio === 1 ? 'full' : 'partial',
           gaps: structuredGaps,
           uncovered_entities: [],
           suggested_queries: [],
           _fallback: true,
           temporal_health: { stale_warning: false, evolution_detected: false, suggestion: 'Coverage computed via fallback (broad search).' },
-          confidence_assessment: ratio >= 0.7 ? 'high' : ratio >= 0.5 ? 'medium' : 'low',
+          confidence_assessment: ratio === null ? 'unknown'
+            : ratio >= 0.7 ? 'high' : ratio >= 0.5 ? 'medium' : 'low',
           ...(autoRetrievedMemories ? { auto_retrieved: autoRetrievedMemories, auto_retrieve_count: autoRetrievedMemories.length } : {}),
         }, config, {
           data_absent: allRelevant.length === 0,

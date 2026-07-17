@@ -73,7 +73,9 @@ export interface ValidatedCoverageResult {
   topic: string;
   total_relevant: number;
   retrieved_count: number;
-  coverage_ratio: number;
+  /** null = UNKNOWN (no relevant memories exist) — must never be coerced to 0 or 1 */
+  coverage_ratio: number | null;
+  coverage_status: 'no_relevant_memories' | 'full' | 'partial';
   gaps: Array<{
     id: string;
     preview: string;
@@ -101,11 +103,15 @@ export function validateCoverageResponse(raw: unknown, endpoint: string): Valida
     };
   }).filter((g): g is NonNullable<typeof g> => g !== null);
 
+  const totalRelevant = num(o.total_relevant) ?? 0;
+  const ratio = num(o.coverage_ratio);  // null/absent stays null — 0/0 is UNKNOWN
   return {
     topic: str(o.topic) || '',
-    total_relevant: num(o.total_relevant) ?? 0,
+    total_relevant: totalRelevant,
     retrieved_count: num(o.retrieved_count) ?? 0,
-    coverage_ratio: num(o.coverage_ratio) ?? 0,
+    coverage_ratio: ratio ?? null,
+    coverage_status: (str(o.coverage_status) as ValidatedCoverageResult['coverage_status'])
+      || (totalRelevant === 0 ? 'no_relevant_memories' : ratio === 1 ? 'full' : 'partial'),
     gaps,
     uncovered_entities: (arr(o.uncovered_entities) || []).filter((e): e is string => typeof e === 'string'),
     suggested_queries: (arr(o.suggested_queries) || []).filter((q): q is string => typeof q === 'string'),
