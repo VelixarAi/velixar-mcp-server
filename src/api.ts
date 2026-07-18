@@ -6,6 +6,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ApiConfig, ApiTiming, MemoryItem, MemoryOrigin, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
 import type { ValidatedRawMemory } from './validate.js';
+import { VERSION } from './version.js';
+import { noteFromHeader, takeUpdateNotice } from './update_notice.js';
 
 // ── Workspace Resolution ──
 
@@ -318,6 +320,9 @@ export class ApiClient {
             authorization: `Bearer ${this.config.apiKey}`,
             'Content-Type': 'application/json',
             ...(clientSlug ? { 'X-Velixar-Client': clientSlug } : {}),
+            // Our own version, so the backend can tell how many callers run stale
+            // builds (and drives the A-signal comparison on the response side).
+            'X-Velixar-Client-Version': VERSION,
             // The channel is declared, not inferred: this process IS the MCP
             // server, so every request it makes is mcp-channel by definition.
             // (A REST script that wants client attribution sends its own
@@ -347,6 +352,12 @@ export class ApiClient {
           _rateLimitRemaining = parseInt(remaining, 10);
           _rateLimitTotal = limit ? parseInt(limit, 10) : _rateLimitTotal;
         }
+
+        // Update nudge, signal A: the backend advertises the latest published
+        // version on every response (server-controlled via its env). The notice
+        // module compares it to our VERSION and, if we're behind, surfaces a
+        // one-time nudge on the next tool response's meta.
+        noteFromHeader(res.headers.get('x-velixar-mcp-latest'));
 
         if (this.config.debug) {
           log('debug', 'api_call', { path, duration_ms: duration });
@@ -533,6 +544,10 @@ export function makeMeta(config: ApiConfig, overrides: Partial<ResponseMeta> = {
   if (meta.sufficient_answer === undefined) {
     meta.sufficient_answer = !meta.data_absent && !meta.partial_context && !meta.contradictions_present && meta.confidence >= 0.7;
   }
+  // Update nudge: if either signal (A: response header, B: npm self-check) marked us
+  // behind, surface it ONCE here, on the first tool response after it was learned.
+  const _upd = takeUpdateNotice();
+  if (_upd) meta.update_available = _upd;
   return meta;
 }
 

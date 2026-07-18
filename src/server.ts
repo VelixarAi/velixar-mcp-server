@@ -16,6 +16,7 @@ import {
 
 import { loadConfig, ApiClient, log, setClientRoots, validateWorkspace } from './api.js';
 import { VERSION } from './version.js';
+import { checkNpmLatest } from './update_notice.js';
 import { setClientSlug } from './api.js';
 import { resolveClient } from './client_id.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
@@ -467,6 +468,12 @@ if (httpPort > 0) {
   // ── Stdio transport (default, for local MCP clients) ──
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Update nudge, signal B: ask npm directly whether a newer build exists. This is
+  // the ONLY signal that reaches pinned users (npx never auto-upgrades a pinned
+  // spec) — it fires here at startup, independent of the backend. Fire-and-forget,
+  // fail-silent; the notice (if any) lands on the first tool response.
+  void checkNpmLatest();
 
   // Die with the host. A stdio MCP server's lifetime IS its host's interest in it:
   // when stdin closes (the host exited or dropped us) there is nobody left to
