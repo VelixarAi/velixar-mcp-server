@@ -21,7 +21,7 @@ import { setClientSlug } from './api.js';
 import { resolveClient } from './client_id.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
 import { systemTools, handleSystemTool, recordAudit } from './tools/system.js';
-import { setCapabilitiesVerified } from './tools/system.js';
+import { setCapabilitiesVerified, setEntitlements, applyEntitlementCaps } from './tools/system.js';
 import { recallTools, handleRecallTool } from './tools/recall.js';
 import { graphTools, handleGraphTool } from './tools/graph.js';
 import { cognitiveTools, handleCognitiveTool, trackToolCallForIdentity } from './tools/cognitive.js';
@@ -165,6 +165,26 @@ fetchRecall(api, config); // non-blocking startup
   } catch {
     log('warn', 'capabilities_check_failed', { hint: 'Backend unreachable at startup — filter params unverified' });
   }
+  // F2v2b: fetch the entitlement record so the tool schema is built from what this
+  // key's workspace is actually provisioned for (tier enum capped at the real
+  // ceiling). Fetch failure = no cap (old backend / offline); the server-side
+  // per-surface checks stay authoritative either way.
+  try {
+    const ent = await Promise.race([
+      api.get<import('./tools/system.js').Entitlements>('/entitlements'),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 3000)),
+    ]);
+    if (ent) {
+      setEntitlements(ent);
+      log('info', 'entitlements_loaded', {
+        plan: ent.plan, org_memory: ent.org_memory?.entitled, max_memory_tier: ent.max_memory_tier,
+      });
+    } else {
+      log('warn', 'entitlements_check_timeout', { hint: 'Schema uncapped — server-side checks still authoritative' });
+    }
+  } catch {
+    log('warn', 'entitlements_unavailable', { hint: 'Old backend or offline — schema uncapped, server-side checks authoritative' });
+  }
 })();
 
 // Capture client roots for workspace cross-validation
@@ -204,7 +224,10 @@ server.setRequestHandler(GetPromptRequestSchema, async (req) => {
 
 // ── Tools ──
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: exposedTools }));
+// Entitlement caps applied at LIST time, not at startup: the entitlement fetch is
+// async and hosts may re-list; capping from pristine definitions each call means a
+// late fetch (or future re-fetch) always produces the current honest schema.
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: applyEntitlementCaps(exposedTools) }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
