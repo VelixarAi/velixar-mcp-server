@@ -57,10 +57,11 @@ function detectAntiPattern(toolName: string): string | null {
   if (toolName === 'velixar_search' && last === 'velixar_context') {
     return 'Note: velixar_context already includes KG-boosted search results. Only use velixar_search if you need a different query.';
   }
-  // Store without prior search (check last 3 calls)
-  if (toolName === 'velixar_store' && !recent.slice(-3).some(t => SEARCH_TOOLS.has(t))) {
-    return 'Warning: search before storing to avoid duplicates.';
-  }
+  // (Removed: the post-store "search before storing to avoid duplicates" hint — it was
+  // delivered AFTER the store succeeded, advice about what to have done when it was too
+  // late to matter. That guidance now lives in the velixar_store tool DESCRIPTION, where
+  // the agent sees it BEFORE the call. Pre-write guidance belongs in the schema; post-write
+  // hints are theater.)
   return null;
 }
 

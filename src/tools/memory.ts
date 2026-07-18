@@ -30,16 +30,16 @@ export const memoryTools: Tool[] = [
     name: 'velixar_store',
     description:
       'Store a memory for later retrieval. Use for important facts, decisions, user preferences, project context, or anything worth remembering long-term. ' +
-      'Memories are workspace-scoped and persist across sessions. ' +
-      'Use check_duplicate: true when storing content that may overlap with existing memories.',
+      'Memories are workspace-scoped and persist across sessions. Long content is automatically chunked; max 50,000 characters (larger is rejected with a 400 before embedding — split it or chunk client-side). ' +
+      'DEDUP (before you call): exact byte-identical duplicates are always blocked server-side. If this content may overlap semantically with existing memories, either velixar_search first or pass check_duplicate:true to run a near-duplicate check.',
     inputSchema: {
       type: 'object',
       properties: {
-        content: { type: 'string', description: 'The memory content to store' },
+        content: { type: 'string', maxLength: 50000, description: 'The memory content to store (max 50,000 chars; longer is rejected before embedding). Long content is chunked automatically.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags for categorization' },
         tier: { type: 'number', description: 'Memory tier: 0=pinned, 1=session, 2=semantic (default), 3=org' },
         quarantine_zone: { type: 'string', description: 'Optional quarantine zone ID. Memory will only be visible to zone members.' },
-        check_duplicate: { type: 'boolean', description: 'Exact byte-duplicates are BLOCKED server-side (existing id returned, nothing written); near-duplicates above dedup_threshold warn but still store.' },
+        check_duplicate: { type: 'boolean', description: 'Exact byte-identical duplicates are ALWAYS blocked server-side regardless of this flag (existing id returned, nothing written). Set true to ADDITIONALLY run a near-duplicate similarity check — advisory: near-dupes above dedup_threshold warn but still store.' },
         dedup_threshold: { type: 'number', description: 'Similarity threshold for duplicate detection (default: 0.95). Only used when check_duplicate is true.' },
         source: { type: 'string', description: 'Provenance label (e.g., "user-stated", "derived-from-analysis")' },
         source_ids: { type: 'array', items: { type: 'string' }, description: 'DERIVATION lineage — the memory IDs this new memory was reasoned/built FROM (e.g. you learned context B from context A). An explicit, directed "derived-from" edge, DISTINCT from semantic similarity and from the temporal previous-memory chain. Omit for an origin memory (learned fresh, no prior context). Query the resulting graph with velixar_lineage.' },

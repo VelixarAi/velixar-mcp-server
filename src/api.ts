@@ -9,6 +9,10 @@ import type { ValidatedRawMemory } from './validate.js';
 import { VERSION } from './version.js';
 import { noteFromHeader, takeUpdateNotice } from './update_notice.js';
 
+// Verifiable volume fingerprint from the backend's X-Velixar-Volume header (DX #10).
+let _lastVolumeId: string | null = null;
+export function getLastVolumeId(): string | null { return _lastVolumeId; }
+
 // ── Workspace Resolution ──
 
 function resolveWorkspace(): { id: string; source: ApiConfig['workspaceSource'] } {
@@ -374,6 +378,13 @@ export class ApiClient {
         // one-time nudge on the next tool response's meta.
         noteFromHeader(res.headers.get('x-velixar-mcp-latest'));
 
+        // Verifiable volume (DX #10): the backend stamps a stable, non-reversible
+        // fingerprint of the workspace it scoped this call to. Surface it so the agent
+        // can confirm which volume it read/wrote — cross-volume contamination is the
+        // platform's top risk, and "(scoped by API key)" was a non-answer.
+        const vol = res.headers.get('x-velixar-volume');
+        if (vol) _lastVolumeId = vol;
+
         if (this.config.debug) {
           log('debug', 'api_call', { path, duration_ms: duration });
         }
@@ -563,6 +574,8 @@ export function makeMeta(config: ApiConfig, overrides: Partial<ResponseMeta> = {
   // behind, surface it ONCE here, on the first tool response after it was learned.
   const _upd = takeUpdateNotice();
   if (_upd) meta.update_available = _upd;
+  // Verifiable volume fingerprint (DX #10) — which volume the backend scoped us to.
+  if (_lastVolumeId) meta.volume_id = _lastVolumeId;
   return meta;
 }
 

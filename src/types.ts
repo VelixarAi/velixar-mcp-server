@@ -22,6 +22,10 @@ export interface ResponseMeta {
   // is running a stale/pinned build). Surfaced so the agent — and through it the
   // user — sees the nudge on the next tool call. Absent when the client is current.
   update_available?: { current: string; latest: string; message: string };
+  // Stable, non-reversible fingerprint of the volume (workspace) the backend scoped this
+  // call to. A client can pin it and assert it never changes — the guard against
+  // cross-volume contamination applied to the API surface. Absent if the backend didn't stamp it.
+  volume_id?: string;
 }
 
 export interface VelixarResponse<T> {

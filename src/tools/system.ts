@@ -115,7 +115,7 @@ export async function handleSystemTool(
   if (name === 'velixar_health') {
     const start = Date.now();
     try {
-      const result = await api.get<{ status?: string; qdrant?: boolean; redis?: boolean; search?: boolean }>('/health');
+      const result = await api.get<{ status?: string; qdrant?: boolean; redis?: boolean; search?: boolean; probed?: Record<string, boolean> }>('/health');
       const latency = Date.now() - start;
       const circuit = getCircuitState();
       return {
@@ -127,9 +127,18 @@ export async function handleSystemTool(
           qdrant: result.qdrant,
           redis: result.redis,
           search: result.search,
+          // Honest coverage (DX #7): what the backend actually PROBED. A green health
+          // does not mean writes work — write_path/embedding are not probed. Read this,
+          // not the top-line status, before trusting the write path.
+          probed: result.probed ?? { note: 'backend did not report coverage (older build)' },
           latency_ms: latency,
           circuit_breaker: circuit.open ? 'open' : 'closed',
+          // capabilities_verified = the MCP initialize handshake succeeded and tools are
+          // registered. It does NOT probe the write path — see `probed` for that.
           capabilities_verified: _capabilitiesVerified,
+          capabilities_verified_meaning: 'MCP handshake + tool registration only; not a write-path probe',
+          // tool_tier = which tier of tools THIS server exposes (0=core … 3=all); a client
+          // capability ceiling, unrelated to memory tiers (0=pinned…3=org) on store.
           tool_tier: parseInt(process.env.VELIXAR_TOOL_TIER || '3', 10),
           version: VERSION,
         }, config, { request_ms: latency })),
