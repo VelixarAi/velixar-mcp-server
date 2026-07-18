@@ -60,3 +60,63 @@ test('keeps the NEWEST latest when both signals report', () => {
   const n = takeUpdateNotice();
   assert.equal(n.latest, '99.0.0');
 });
+
+// ── v2: backend-authoritative manifest + escalation ──
+
+test('manifest handshake: server-computed status becomes the notice', async () => {
+  _reset();
+  const { fetchManifest, instructionsText } = await import('../dist/update_notice.js');
+  const fakeApi = { get: async () => ({
+    manifest: { latest: '99.0.0' },
+    update_status: { status: 'behind', current: VERSION, latest: '99.0.0', severity: 'info',
+      reason: 'test reason', action: 'update your MCP config to velixar-mcp-server@99.0.0',
+      restart_required: true },
+  }) };
+  await fetchManifest(fakeApi);
+  const n = takeUpdateNotice();
+  assert.equal(n.latest, '99.0.0');
+  assert.match(n.message, /test reason/);
+  assert.match(n.message, /relay/i, 'the message must ask the agent to relay it');
+  assert.equal(instructionsText() !== null, true, 'initialize instructions channel armed');
+  assert.equal(takeUpdateNotice(), null, 'info severity: once per session');
+});
+
+test('escalated severity repeats on EVERY response and carries a warning', async () => {
+  _reset();
+  const { fetchManifest } = await import('../dist/update_notice.js');
+  await fetchManifest({ get: async () => ({
+    manifest: { latest: '99.0.0' },
+    update_status: { status: 'behind', current: VERSION, latest: '99.0.0',
+      severity: 'data_integrity', reason: 'fixes provenance fabrication',
+      action: 'update to velixar-mcp-server@99.0.0', restart_required: true },
+  }) });
+  const first = takeUpdateNotice();
+  assert.ok(first.warning, 'escalated notice must warn results may be affected');
+  assert.ok(takeUpdateNotice(), 'repeats — not once-per-session');
+  assert.ok(takeUpdateNotice(), 'keeps repeating until resolved');
+});
+
+test('manifest says current -> no notice, and header churn at same version stays quiet', async () => {
+  _reset();
+  const { fetchManifest } = await import('../dist/update_notice.js');
+  await fetchManifest({ get: async () => ({ manifest: { latest: VERSION } }) });
+  assert.equal(takeUpdateNotice(), null);
+  noteFromHeader(VERSION);
+  assert.equal(takeUpdateNotice(), null, 'same latest from the header must not re-nag');
+});
+
+test('a NEWER latest from the header re-arms the notice mid-session', async () => {
+  _reset();
+  noteLatest('98.0.0');
+  takeUpdateNotice();                       // consumed
+  noteFromHeader('99.0.0');                 // update shipped mid-session
+  const n = takeUpdateNotice();
+  assert.ok(n && n.latest === '99.0.0', 'latest moved -> one fresh notice');
+});
+
+test('manifest fetch failure is silent', async () => {
+  _reset();
+  const { fetchManifest } = await import('../dist/update_notice.js');
+  await fetchManifest({ get: async () => { throw new Error('offline'); } });
+  assert.equal(takeUpdateNotice(), null);
+});

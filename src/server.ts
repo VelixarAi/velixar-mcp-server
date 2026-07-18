@@ -16,7 +16,7 @@ import {
 
 import { loadConfig, ApiClient, log, setClientRoots, validateWorkspace } from './api.js';
 import { VERSION } from './version.js';
-import { checkNpmLatest } from './update_notice.js';
+import { checkNpmLatest, fetchManifest, instructionsText } from './update_notice.js';
 import { setClientSlug } from './api.js';
 import { resolveClient } from './client_id.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
@@ -86,6 +86,11 @@ if (process.argv[2] === 'install') {
 const config = loadConfig();
 const api = new ApiClient(config);
 
+// Update nudge A' — the backend-authoritative version handshake (work order cf9cc066).
+// Kicked off immediately; the Server construct below races it briefly so the notice
+// can ride the MCP initialize `instructions` (the session-start channel). Fail-silent.
+const manifestReady = fetchManifest(api);
+
 // M19: MCP host detection — infer host from transport/environment signals
 const detectedHost = process.env.CURSOR_SESSION_ID ? 'cursor'
   : process.env.CONTINUE_SESSION_ID ? 'continue'
@@ -139,9 +144,17 @@ const systemToolNames = new Set(systemTools.map(t => t.name));
 // H7.5: Server name configurable for white-label partners
 const serverName = process.env.VELIXAR_MCP_SERVER_NAME || 'velixar-mcp-server';
 
+// Give the manifest handshake a short window to land so an out-of-date client is
+// announced in initialize `instructions` — the channel the model sees BEFORE its
+// first tool call. If the race times out, the first-tool-result channel still delivers.
+await Promise.race([manifestReady, new Promise(r => setTimeout(r, 1200))]);
+const updateInstructions = instructionsText();
 const server = new Server(
   { name: serverName, version: VERSION },
-  { capabilities: { tools: {}, resources: {}, prompts: {} } },
+  {
+    capabilities: { tools: {}, resources: {}, prompts: {} },
+    ...(updateInstructions ? { instructions: updateInstructions } : {}),
+  },
 );
 
 // ── Resources ──
