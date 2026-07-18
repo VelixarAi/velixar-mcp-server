@@ -17,59 +17,6 @@ let _capabilitiesVerified = false;
 export function setCapabilitiesVerified(v: boolean): void { _capabilitiesVerified = v; }
 export function isCapabilitiesVerified(): boolean { return _capabilitiesVerified; }
 
-// F2v2b: the server-authored entitlement record for THIS key's workspace, fetched at
-// startup from GET /v1/entitlements. Drives an HONEST tool schema (the tier enum is
-// capped at the workspace's real ceiling, so unentitled options are invisible) and the
-// entitlement fields in velixar_capabilities. Schema gating is UX only — the backend's
-// per-surface checks stay authoritative. null = not fetched (old backend / offline):
-// don't cap, the server still 403s.
-export interface Entitlements {
-  plan?: string;
-  org_memory?: { entitled: boolean; reason?: string | null };
-  max_memory_tier?: number;
-}
-let _entitlements: Entitlements | null = null;
-
-export function setEntitlements(e: Entitlements | null): void { _entitlements = e; }
-export function getEntitlements(): Entitlements | null { return _entitlements; }
-export function orgMemoryEntitled(): boolean {
-  // Unknown (null) = don't cap the schema; only a definite "not entitled" hides tier 3.
-  return _entitlements?.org_memory?.entitled !== false;
-}
-
-const TIER_DESC_FULL = 'Memory tier: 0=pinned, 1=session, 2=semantic (default), 3=org';
-const TIER_DESC_CAPPED =
-  'Memory tier: 0=pinned, 1=session, 2=semantic (default). Tier 3 (org) requires an ' +
-  'org-memory plan and organization membership — not provisioned for this key.';
-
-/** Rewrite `tier` properties in tool schemas to the workspace's real ceiling.
- *  Returns new tool objects (originals untouched) so a later entitlement change
- *  or re-fetch can re-cap from the pristine definitions. */
-export function applyEntitlementCaps<T extends { inputSchema?: unknown }>(tools: T[]): T[] {
-  if (orgMemoryEntitled()) return tools;
-  return tools.map((tool) => {
-    const schema = tool.inputSchema as { properties?: Record<string, { type?: string; description?: string; maximum?: number }> } | undefined;
-    const tier = schema?.properties?.tier;
-    if (!tier || tier.type !== 'number') return tool;
-    return {
-      ...tool,
-      inputSchema: {
-        ...(schema as object),
-        properties: {
-          ...schema!.properties,
-          tier: {
-            ...tier,
-            maximum: 2,
-            description: tier.description === TIER_DESC_FULL || (tier.description || '').includes('3=org')
-              ? TIER_DESC_CAPPED
-              : `${tier.description || 'Memory tier'} (max 2 — tier 3 requires an org-memory plan)`,
-          },
-        },
-      },
-    } as T;
-  });
-}
-
 // Build 7.1: Audit log — in-memory ring buffer of recent tool calls
 interface AuditEntry {
   tool: string;
@@ -244,15 +191,8 @@ export async function handleSystemTool(
       text: JSON.stringify(wrapResponse({
         tools: toolNames,
         tool_count: toolNames.length,
-        // toolset_tier is WHICH TOOLS this server exposes (env-set, 1/2/3) — a different
-        // axis from memory tiers. F2v2 flagged the old bare `tool_tier` as reading like
-        // an entitlement ceiling; the memory-tier ceiling is `max_memory_tier` below.
-        toolset_tier: parseInt(process.env.VELIXAR_TOOL_TIER || '3', 10),
-        tool_tier: parseInt(process.env.VELIXAR_TOOL_TIER || '3', 10),  // deprecated alias of toolset_tier
-        tier_info: (() => { const t = parseInt(process.env.VELIXAR_TOOL_TIER || '3', 10); return t === 1 ? 'minimal toolset (9 tools)' : t === 2 ? 'standard toolset (~20 tools)' : 'full toolset (all tools)'; })(),
-        plan: getEntitlements()?.plan ?? null,
-        org_memory_entitled: getEntitlements()?.org_memory?.entitled ?? null,
-        max_memory_tier: getEntitlements()?.max_memory_tier ?? (orgMemoryEntitled() ? 3 : 2),
+        tool_tier: parseInt(process.env.VELIXAR_TOOL_TIER || '3', 10),
+        tier_info: (() => { const t = parseInt(process.env.VELIXAR_TOOL_TIER || '3', 10); return t === 1 ? 'minimal (9 tools)' : t === 2 ? 'standard (~20 tools)' : 'full (all tools)'; })(),
         resources: resourceUris,
         prompts: promptNames,
         features: {
