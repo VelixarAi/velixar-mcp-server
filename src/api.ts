@@ -334,9 +334,24 @@ export class ApiClient {
 
         if (!res.ok) {
           const body = await res.text().catch(() => '');
-          const err = new Error(`API ${res.status}: ${body.slice(0, 200)}`);
-          // Don't retry 4xx (client errors)
-          if (res.status >= 400 && res.status < 500) throw err;
+          // The backend now emits machine-actionable error metadata in the body
+          // (retryable, subsystem, state_effect, retry_after). Honor the SERVER's
+          // retryable signal instead of guessing by status — guessing is what made a
+          // client hammer a systemic-fault path and trip the circuit breaker. Surface
+          // subsystem + state_effect to the agent so it knows which layer broke and
+          // whether a failed write left residue.
+          let e: Record<string, unknown> | null = null;
+          try { e = (JSON.parse(body) as { error?: Record<string, unknown> }).error ?? null; } catch { /* non-JSON */ }
+          const detail = (e && typeof e.message === 'string') ? e.message : body.slice(0, 200);
+          const tags: string[] = [];
+          if (e && e.retryable !== undefined) tags.push(`retryable=${e.retryable}`);
+          if (e && e.subsystem) tags.push(`subsystem=${e.subsystem}`);
+          if (e && e.state_effect) tags.push(`state_effect=${e.state_effect}`);
+          if (e && e.retry_after !== undefined) tags.push(`retry_after=${e.retry_after}s`);
+          const err = new Error(`API ${res.status}: ${detail}${tags.length ? ` (${tags.join(', ')})` : ''}`);
+          // Prefer the server's explicit retryable; fall back to the status heuristic.
+          const retry = (e && typeof e.retryable === 'boolean') ? e.retryable : !(res.status >= 400 && res.status < 500);
+          if (!retry) throw err;
           lastError = err;
           continue;
         }
