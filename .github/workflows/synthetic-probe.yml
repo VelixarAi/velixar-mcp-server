@@ -1,0 +1,53 @@
+# MCP-external synthetic probe (F1-OBSERVABILITY layer 3, off-box by construction).
+# The backend can be healthy while the MCP session in front of it is dark — this is
+# the only vantage point that sees that failure class.
+#
+# SECURITY (public repo — FIR-F1-PHASE2 #8): triggers are schedule + manual ONLY.
+# Never add pull_request/pull_request_target here: they would expose the secret to
+# forks. Secret absent -> the job exits NEUTRAL (skip, honestly logged), so the
+# pre-secret period and forks stay green-without-lying.
+#
+# Setup (one-time, repo owner): mint a DEDICATED minimal-scope key whose workspace
+# holds nothing but probe traffic, then:
+#   gh secret set VELIXAR_CANARY_KEY   (paste the key at the prompt — NOT --body -)
+
+name: synthetic-probe
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if no canary key
+        id: gate
+        env:
+          HAS_KEY: ${{ secrets.VELIXAR_CANARY_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "VELIXAR_CANARY_KEY not configured — probe skipped (neutral, not a pass)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          node-version: 20
+          cache: npm
+      - name: Build server
+        if: steps.gate.outputs.run == 'true'
+        run: npm ci && npm run build
+      - name: Run probe
+        if: steps.gate.outputs.run == 'true'
+        env:
+          VELIXAR_CANARY_KEY: ${{ secrets.VELIXAR_CANARY_KEY }}
+        run: node scripts/synthetic-probe.mjs
