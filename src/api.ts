@@ -579,8 +579,59 @@ export function makeMeta(config: ApiConfig, overrides: Partial<ResponseMeta> = {
   return meta;
 }
 
+/** Confidence, weakest → strongest. A payload may never out-claim its own envelope. */
+const PRESENTATION_RANK: Record<string, number> = {
+  do_not_assert: 0, exploratory: 1, cautious: 2, tentative_synthesis: 3,
+  confident_summary: 4, assertive: 5,
+};
+
+/**
+ * ONE VERDICT PER RESPONSE.
+ *
+ * Observed in prod 2026-07-31, inside a SINGLE velixar_context payload:
+ *     meta.sufficient_answer: false
+ *     justification.presentation_mode: "confident_summary"
+ * The envelope said the answer was insufficient; the payload said it was confident. Two
+ * contradictory confidence signals crossing the same boundary in one response — an FIR §3.5
+ * violation (confidence must survive every boundary hop).
+ *
+ * They disagreed because they are computed independently and never meet: `makeMeta` derives
+ * sufficient_answer from data_absent/partial_context/contradictions/confidence, while
+ * `resolvePresentation` derives the mode from claim type + the confidence profile. Nothing
+ * reconciled them, so a reader could pick whichever signal it happened to look at — and a
+ * model reading the payload will pick the confident one.
+ *
+ * `wrapResponse` is the one place both exist at once, so reconciliation belongs here. The
+ * envelope is authoritative and the payload is CAPPED, never raised: a cap can only make a
+ * response more cautious. And the cap is visible — silently rewriting a verdict is the same
+ * defect in a quieter form.
+ */
+function reconcileConfidenceSignals(data: unknown, meta: ResponseMeta): void {
+  if (!data || typeof data !== 'object') return;
+  const j = (data as Record<string, unknown>).justification;
+  if (!j || typeof j !== 'object') return;
+  const jr = j as Record<string, unknown>;
+  const mode = jr.presentation_mode;
+  if (typeof mode !== 'string' || !(mode in PRESENTATION_RANK)) return;
+
+  // data_absent is absolute: there is nothing to be confident ABOUT.
+  const ceilingMode = meta.data_absent ? 'do_not_assert'
+    : meta.sufficient_answer === false ? 'tentative_synthesis'
+    : null;
+  if (!ceilingMode) return;
+  if (PRESENTATION_RANK[mode] <= PRESENTATION_RANK[ceilingMode]) return;
+
+  jr.presentation_mode = ceilingMode;
+  jr.presentation_capped_from = mode;
+  jr.presentation_capped_reason = meta.data_absent
+    ? 'envelope reports data_absent — nothing to be confident about'
+    : 'envelope reports sufficient_answer=false; the payload may not present as more certain than that';
+}
+
 export function wrapResponse<T>(data: T, config: ApiConfig, overrides: Partial<ResponseMeta> = {}): VelixarResponse<T> {
-  return { status: overrides.partial_context ? 'partial' : 'ok', data, meta: makeMeta(config, overrides) };
+  const meta = makeMeta(config, overrides);
+  reconcileConfidenceSignals(data, meta);
+  return { status: overrides.partial_context ? 'partial' : 'ok', data, meta };
 }
 
 // ── Error Helpers ──
