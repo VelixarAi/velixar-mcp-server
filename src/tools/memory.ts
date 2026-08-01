@@ -254,11 +254,24 @@ export async function handleMemoryTool(
       return { text: JSON.stringify(wrapResponse(
         { count: items.length, count_is: 'first page only — backend count unavailable' }, config)) };
     }
+    // An empty page with a LIVE cursor is "keep paging", not "no data". The backend
+    // bounds a filtered listing (origin filters still walk a capped scan), so a page whose
+    // rows all failed the filter comes back empty while the store is full — and calling
+    // that data_absent told the agent its corpus was empty and ended the search. Same lie
+    // class as a false-green health check. The backend now says which it is via
+    // absence_reason; honour that, and fall back to the cursor when talking to an older one.
+    const _emptyButMore = items.length === 0 && !!result.cursor;
     return {
       text: JSON.stringify(wrapResponse(
-        { items, count: items.length, cursor: result.cursor },
+        {
+          items, count: items.length, cursor: result.cursor,
+          ...(_emptyButMore ? { more_to_scan: true } : {}),
+        },
         config,
-        { data_absent: items.length === 0 },
+        {
+          data_absent: items.length === 0 && !result.cursor,
+          ...(_emptyButMore ? { absence_reason: 'filtered_page' as const } : {}),
+        },
       )),
     };
   }

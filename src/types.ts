@@ -303,6 +303,10 @@ export interface CapabilitiesResult {
 
 export type AbsenceReason =
   | 'no_data'           // No memories exist for this query/workspace
+  | 'filtered_page'     // This PAGE matched nothing but the scan is unfinished — keep paging.
+                        // Not absence: the backend bounds a filtered listing, so an empty
+                        // page arriving WITH a live cursor means "more to scan", and
+                        // reporting it as no_data told agents a full store was empty.
   | 'low_confidence'    // Data exists but confidence too low to surface
   | 'partial'           // Some data found, but incomplete coverage
   | 'conflict'          // Contradictory data prevents a clear answer
