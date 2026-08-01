@@ -62,15 +62,45 @@ export function computeConfidence(evidence: EvidenceItem[], contradictionCount: 
   const contradictionPressure = contradictionCount > 0 ? Math.min(contradictionCount / 3, 1) : 0;
   const derivation = evidence.some(e => e.evidence_class === 'direct') ? 1 : 2;
 
-  const score = (strength * 0.3 + consistency * 0.25 + freshness * 0.2 + (1 - contradictionPressure) * 0.15 + (1 / derivation) * 0.1);
+  const rawScore = (strength * 0.3 + consistency * 0.25 + freshness * 0.2 + (1 - contradictionPressure) * 0.15 + (1 / derivation) * 0.1);
+
+  // STALENESS FLOORS CONFIDENCE — it is not just another weighted term.
+  //
+  // Verified in prod 2026-07-31: 10 evidence items, EVERY ONE tagged freshness "stale", so
+  // evidence_freshness resolved to 0 — and the verdict was still level "high", score 0.75.
+  // The arithmetic explains it exactly: freshness at its WORST POSSIBLE VALUE costs only
+  // its 0.2 weight, and strength(0.3) + consistency(0.25) + contradiction(0.1) +
+  // derivation(0.1) carry the total to precisely the 0.75 "high" threshold. A scored
+  // dimension pinned at rock bottom contributed nothing to the outcome; it was averaged
+  // away by the dimensions that happened to look good.
+  //
+  // A weighted sum lets any single dimension be outvoted. Some dimensions must not be
+  // outvotable. If everything you know is old, you do not get to be confident about it —
+  // no quantity of stale evidence, however internally consistent, makes a claim current.
+  // So freshness sets a CEILING on the score rather than contributing a share of it.
+  const ceiling = freshnessCeiling(freshness);
+  const score = Math.min(rawScore, ceiling);
+  const capped = score < rawScore;
   const level = resolveLevel(score, contradictionPressure);
 
   return {
     level, score, evidence_strength: strength, evidence_consistency: consistency,
     evidence_freshness: freshness, derivation_distance: derivation,
     contradiction_pressure: contradictionPressure,
-    reason: buildReason(level, evidence.length, contradictionCount),
+    // If a cap fired, SAY SO. Silently lowering a number replaces one unexplained verdict
+    // with another; a reader must be able to see that age is what limited this.
+    ...(capped ? { freshness_capped: true, raw_score: Number(rawScore.toFixed(4)) } : {}),
+    reason: buildReason(level, evidence.length, contradictionCount, capped),
   };
+}
+
+/** The highest score a given freshness may reach. Deliberately a ladder, not a curve —
+ *  the thresholds are the ones resolveLevel() already uses, so the cap is legible as
+ *  "this may be at most `medium`" rather than as an opaque number. */
+function freshnessCeiling(freshness: number): number {
+  if (freshness === 0) return 0.49;    // NOTHING recent or even aging -> `low` at best
+  if (freshness < 0.5) return 0.74;    // mostly stale                 -> `medium` at best
+  return 1;                            // enough current evidence      -> uncapped
 }
 
 function resolveLevel(score: number, contradictionPressure: number): ConfidenceLevel {
@@ -81,10 +111,22 @@ function resolveLevel(score: number, contradictionPressure: number): ConfidenceL
   return 'unstable';
 }
 
-function buildReason(level: ConfidenceLevel, count: number, contradictions: number): string {
-  const base = `Based on ${count} piece${count !== 1 ? 's' : ''} of evidence`;
-  if (contradictions > 0) return `${base} with ${contradictions} contradiction${contradictions !== 1 ? 's' : ''}`;
-  return `${base}; confidence ${level}`;
+function buildReason(level: ConfidenceLevel, count: number, contradictions: number, staleCapped = false): string {
+  const parts = [`Based on ${count} piece${count !== 1 ? 's' : ''} of evidence`];
+  if (contradictions > 0) {
+    parts.push(`with ${contradictions} contradiction${contradictions !== 1 ? 's' : ''}`);
+  }
+  // The cap has to survive into the prose too. A reader who sees only `level: low` and a
+  // pile of consistent evidence will reasonably conclude the scorer is broken — unless the
+  // reason says age is what limited it. Note this appends rather than early-returning:
+  // contradictions used to short-circuit the sentence, which would have hidden the cap
+  // in exactly the payload that carried both problems at once.
+  if (staleCapped) {
+    parts.push('capped by staleness (all supporting evidence is old, so confidence cannot be high regardless of how much of it agrees)');
+  }
+  if (contradictions === 0 && !staleCapped) parts.push(`confidence ${level}`);
+  else parts.push(`confidence ${level}`);
+  return parts.join('; ');
 }
 
 // ── Presentation Policy ──

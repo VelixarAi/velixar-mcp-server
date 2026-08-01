@@ -222,6 +222,11 @@ export interface ConfidenceProfile {
   derivation_distance: number;
   contradiction_pressure: number;
   pattern_stability?: number;
+  /** Set when staleness CAPPED the verdict. If a cap is applied it must be visible —
+   *  replacing one silent verdict with another silent verdict fixes nothing. */
+  freshness_capped?: boolean;
+  /** The weighted score before the staleness ceiling, so the cap is auditable. */
+  raw_score?: number;
   reason: string;
 }
 
