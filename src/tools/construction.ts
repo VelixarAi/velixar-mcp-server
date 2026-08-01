@@ -118,7 +118,18 @@ export async function handleConstructionTool(
 
     const contextId = randomUUID();
     const provenanceLog: Array<Record<string, unknown>> = [];
-    const INTERNAL_TIMEOUT = 3000;
+    // 3000ms was too tight AND failed silently. Every angle issues a /memory/search, and
+    // search EMBEDS the query server-side — the measured store-pipeline baseline is ~5s, so
+    // three parallel embedding searches routinely exceeded a 3s budget. The race then
+    // resolved to [], which does not throw, so the catch never fired and the provenance log
+    // recorded `results: 0` — a slow search became indistinguishable from an empty corpus.
+    // Verified in prod 2026-07-31: memories_considered 0 at request_ms 3103, on a
+    // 2670-memory workspace where velixar_search returned 10 hits immediately.
+    const INTERNAL_TIMEOUT = 10000;
+    // A sentinel, not []. The whole defect was that the timeout produced a value the happy
+    // path could not tell apart from "nothing matched".
+    const TIMED_OUT = Symbol('retrieval_timeout');
+    let retrievalStatus: 'ok' | 'timeout' | 'error' = 'ok';
 
     // Step 1: Multi-angle retrieval (with timeout)
     // Prefer explicit queries from LLM (they know the vocabulary); fall back to intent extraction
@@ -145,12 +156,27 @@ export async function handleConstructionTool(
             return api.get<unknown>(`/memory/search?${params}`, true);
           }),
         ),
-        new Promise<PromiseSettledResult<unknown>[]>(resolve =>
-          setTimeout(() => resolve([]), INTERNAL_TIMEOUT)
+        new Promise<typeof TIMED_OUT>(resolve =>
+          setTimeout(() => resolve(TIMED_OUT), INTERNAL_TIMEOUT)
         ),
       ]);
 
-      const perQuery = (searchResults as PromiseSettledResult<unknown>[]).map((r, i) => {
+      if (searchResults === TIMED_OUT) {
+        retrievalStatus = 'timeout';
+        provenanceLog.push({ step: 'multi_search', status: 'timeout', queries: angles, ms: INTERNAL_TIMEOUT });
+      }
+
+      const settled = searchResults === TIMED_OUT ? [] : searchResults as PromiseSettledResult<unknown>[];
+      // allSettled NEVER throws, so the outer catch cannot see a failed search. If EVERY
+      // angle rejected, that is a failed lookup, not an empty corpus — the same defect as
+      // the timeout, one layer down, and it was found by the falsifier for the timeout.
+      const rejectedCount = settled.filter(r => r.status === 'rejected').length;
+      if (settled.length > 0 && rejectedCount === settled.length) {
+        retrievalStatus = 'error';
+        provenanceLog.push({ step: 'multi_search', status: 'error', detail: 'every query angle failed', queries: angles });
+      }
+
+      const perQuery = settled.map((r, i) => {
         if (r.status !== 'fulfilled') return { query: angles[i], memories: [] as MemoryItem[] };
         try {
           const validated = validateSearchResponse(r.value, '/memory/search');
@@ -163,9 +189,12 @@ export async function handleConstructionTool(
 
       const { merged } = mergeMultiQueryResults(perQuery, 'weighted', 20);
       allMemories = merged;
-      provenanceLog.push({ step: 'multi_search', queries: angles, results: merged.length, ms: Date.now() - searchStart });
-    } catch {
-      provenanceLog.push({ step: 'multi_search', error: 'timeout', ms: INTERNAL_TIMEOUT });
+      if (retrievalStatus === 'ok') {
+        provenanceLog.push({ step: 'multi_search', queries: angles, results: merged.length, ms: Date.now() - searchStart });
+      }
+    } catch (e) {
+      retrievalStatus = 'error';
+      provenanceLog.push({ step: 'multi_search', status: 'error', detail: String(e), ms: Date.now() - searchStart });
     }
 
     // Add forced includes
@@ -308,21 +337,59 @@ export async function handleConstructionTool(
           },
           chain_count: temporal.temporal_context.chain_count,
         },
-        anti_hallucination: {
-          explicit_gaps: gapDescriptions.slice(0, 10),
-          low_confidence_sections: sections.filter(s => s.confidence < 0.5).map(s => s.label),
-          contradictions_active: 0,
-          instruction: gaps.length > 0
-            ? 'Do NOT fill gaps listed above with inference. State them as unknown.'
-            : coverageRatio !== null && coverageRatio < 0.7
-              ? 'Coverage is incomplete. Qualify your answer and note what may be missing.'
-              : 'Context appears adequate for synthesis.',
-          suggested_queries: suggestedQueries,
-        },
+        anti_hallucination: (() => {
+          // DENY-BY-DEFAULT ADEQUACY. The old ternary fell through to "Context appears
+          // adequate for synthesis" in the two states where adequacy is LEAST knowable:
+          //   * zero memories retrieved  -> no gaps found, because there was nothing to
+          //     find gaps IN. Absence of evidence became evidence of adequacy.
+          //   * coverage check unavailable -> `coverageRatio !== null` is false, so the
+          //     "incomplete" branch was SKIPPED and UNKNOWN coverage read as fine.
+          // Verified in prod 2026-07-31: 0 memories, data_absent true, coverage
+          // "unavailable" — and the tool still emitted "adequate for synthesis" with
+          // explicit_gaps []. That is an FIR §3.5 violation (confidence must survive every
+          // boundary hop) in the one tool whose entire purpose is preventing ungrounded
+          // assertion. Adequacy is now something we must AFFIRMATIVELY KNOW, never a
+          // default reached by elimination.
+          const evidenceCount = currentMemories.length;
+          const coverageKnown = coverageRatio !== null;
+          let instruction: string;
+          let doNotAssert = false;
+          if (retrievalStatus !== 'ok') {
+            doNotAssert = true;
+            instruction = `RETRIEVAL DID NOT COMPLETE (${retrievalStatus}). This is NOT an empty corpus — it is an unfinished lookup. Do not treat this as evidence of absence, and do not answer from it. Retry, or narrow the intent.`;
+          } else if (evidenceCount === 0) {
+            doNotAssert = true;
+            instruction = 'NO MEMORIES RETRIEVED. Do not synthesise an answer from this context and do not report the topic as unknown to the organisation — retrieval returning nothing is not the same as nothing existing. Try velixar_context or a direct velixar_search first.';
+          } else if (gaps.length > 0) {
+            instruction = 'Do NOT fill gaps listed above with inference. State them as unknown.';
+          } else if (coverageRatio === null) {   // narrow on the value so TS proves the next branch
+            instruction = 'Coverage could NOT be verified (the check was unavailable). Treat this context as possibly incomplete and qualify the answer — an unverified coverage is not a good one.';
+          } else if (coverageRatio < 0.7) {
+            instruction = 'Coverage is incomplete. Qualify your answer and note what may be missing.';
+          } else {
+            instruction = 'Context appears adequate for synthesis.';
+          }
+          return {
+            explicit_gaps: gapDescriptions.slice(0, 10),
+            low_confidence_sections: sections.filter(s => s.confidence < 0.5).map(s => s.label),
+            contradictions_active: 0,
+            // Machine-readable twin of `instruction`, so a caller that never reads prose
+            // still cannot mistake this for a green light.
+            do_not_assert: doNotAssert,
+            retrieval_status: retrievalStatus,
+            coverage_verified: coverageKnown,
+            instruction,
+            suggested_queries: suggestedQueries,
+          };
+        })(),
         provenance: { context_id: contextId, created_at: new Date().toISOString(), expires_at: expiresAt, intent, strategy, steps: provenanceLog },
       }, config, {
-        data_absent: currentMemories.length === 0,
-        partial_context: coverageRatio !== null && coverageRatio < 0.5,
+        // A timed-out or errored retrieval is NOT absence — same lie class as an empty
+        // page with a live cursor being reported as data_absent.
+        data_absent: retrievalStatus === 'ok' && currentMemories.length === 0,
+        ...(retrievalStatus !== 'ok' ? { absence_reason: 'retrieval_incomplete' as const } : {}),
+        // Unknown coverage is partial context, not full context.
+        partial_context: coverageRatio === null || coverageRatio < 0.5,
       })),
     };
   }

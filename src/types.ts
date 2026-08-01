@@ -303,6 +303,8 @@ export interface CapabilitiesResult {
 
 export type AbsenceReason =
   | 'no_data'           // No memories exist for this query/workspace
+  | 'retrieval_incomplete'  // The lookup did not finish (timeout/error). NOT absence:
+                        // nothing was learned about whether the data exists.
   | 'filtered_page'     // This PAGE matched nothing but the scan is unfinished — keep paging.
                         // Not absence: the backend bounds a filtered listing, so an empty
                         // page arriving WITH a live cursor means "more to scan", and
