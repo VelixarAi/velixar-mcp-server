@@ -134,12 +134,24 @@ export async function handleRecallTool(
 
     // Contradiction flags
     const rawCArr = contradictionsRaw ? (Array.isArray(contradictionsRaw.contradictions) ? contradictionsRaw.contradictions : []) : [];
-    const openContradictions = rawCArr.map((c: any) => ({
-      id: c.id,
-      statement_a: c.statement_a || c.memory_a_content,
-      statement_b: c.statement_b || c.memory_b_content,
-      severity: c.severity || 'medium',
-    }));
+    const openContradictions = rawCArr.map((c: any) => {
+      const a = c.statement_a || c.memory_a_content;
+      const b = c.statement_b || c.memory_b_content;
+      return {
+        id: c.id,
+        statement_a: a,
+        statement_b: b,
+        severity: c.severity || 'medium',
+        // Observed in prod: entries arrived as {id, severity} and nothing else, because the
+        // reader returns neither statement under either name. An id and a severity is not a
+        // contradiction a model can act on — it is the SHAPE of one. Say that, instead of
+        // emitting a stub that looks like content.
+        ...((!a && !b) ? {
+          detail_unavailable: true,
+          note: `contradiction ${c.id} is flagged but its statements were not returned by the contradictions reader — fetch it directly with velixar_contradictions`,
+        } : {}),
+      };
+    });
 
     // Build brief
     const brief = {
@@ -150,7 +162,46 @@ export async function handleRecallTool(
       recent_activity: compact ? recentItems.slice(0, 3) : recentItems,
       open_issues: openContradictions,
       contradiction_count: openContradictions.length,
+      // NOT a computed empty result. Nothing has ever populated this, and returning []
+      // claims "we looked and found none" — which is a different statement, and the one a
+      // reader will believe. An empty section must say WHY it is empty.
       pattern_hints: [] as string[],
+      // Why each empty section is empty. `[]` is ambiguous between "none exist", "the
+      // source failed" and "this was never built", and those demand different reactions
+      // from the caller: trust it, retry it, or ignore it forever.
+      empty_sections: [
+        ...(relevantFacts.length === 0 ? [{
+          section: 'relevant_facts',
+          reason: searchResults.status === 'rejected' ? 'source_unavailable' : 'no_matches',
+          detail: searchResults.status === 'rejected'
+            ? 'the search call failed — this is NOT evidence that the workspace lacks matching memories'
+            : 'search ran and matched nothing for this topic',
+        }] : []),
+        ...(recentItems.length === 0 ? [{
+          section: 'recent_activity',
+          reason: listRes.status === 'rejected' ? 'source_unavailable' : 'no_matches',
+          detail: listRes.status === 'rejected'
+            ? 'the list call failed — absence here is not evidence of an empty workspace'
+            : 'list ran and returned no rows',
+        }] : []),
+        ...(openContradictions.length === 0 ? [{
+          section: 'open_issues',
+          reason: contradictionsRes.status === 'rejected' ? 'source_unavailable' : 'no_matches',
+          detail: contradictionsRes.status === 'rejected'
+            ? 'the contradictions call failed — unknown, not clean'
+            : 'no open contradictions recorded',
+        }] : []),
+        {
+          section: 'pattern_hints',
+          reason: 'not_implemented',
+          detail: 'no pattern extraction runs in this path yet; the empty array is a placeholder, not a finding. Do not read it as "no patterns exist".',
+        },
+        ...((overview && (overview.temporal_chains || 0) === 0) ? [{
+          section: 'temporal_chains',
+          reason: 'none_exist',
+          detail: 'the workspace has 0 chains — supersession/previous_memory_id edges are not being written, so temporal ordering is unavailable rather than empty',
+        }] : []),
+      ],
       // Phase 4: Multi-angle search metadata
       ...(multiAngle ? { search_angles_used: searchAnglesUsed } : {}),
       section_freshness: {
