@@ -63,7 +63,14 @@ export interface Author {
 export interface Provenance {
   created_at: string;
   updated_at: string;
+  /** AUTHOR-DECLARED derivation only ("B was reasoned FROM A"). NEVER inferred, and never
+   *  the temporal chain — see previous_memory_id below. */
   derived_from?: string[];
+  /** The TEMPORAL chain link (what was stored before this). A different relationship from
+   *  derivation: "came after" is not "was reasoned from". */
+  previous_memory_id?: string | null;
+  /** True when the author declared no sources — learned fresh. Auditable, not a gap. */
+  is_origin?: boolean;
   last_touched: string;
 }
 

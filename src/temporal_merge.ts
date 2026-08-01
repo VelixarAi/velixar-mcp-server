@@ -49,8 +49,20 @@ interface ChainLink {
 }
 
 /**
- * Detect supersession relationships from chain links (previous_memory_id / derived_from).
+ * Detect supersession relationships from the TEMPORAL CHAIN (previous_memory_id).
  * Returns a map of superseded_id → superseding_id.
+ *
+ * This used to read `provenance.derived_from`, which normalizeMemory manufactured out of
+ * `previous_memory_id`. So it worked — by accident, through a fabricated field. Now that
+ * `derived_from` means what it says (AUTHOR-DECLARED derivation, usually empty), reading it
+ * here would silently gut chain detection. It reads the temporal link directly instead, so
+ * behaviour is UNCHANGED by the provenance fix.
+ *
+ * ⚠️ SEPARATELY, AND NOT FIXED HERE: treating "was stored after" as "supersedes" is a
+ * questionable semantic. It is naive supersession, and the 2026-07-27 HaluMem ceiling test
+ * MEASURED that as harmful (−7 Update, −3 QA) because dropping the predecessor took needed
+ * context with it. Changing it is the C3 supersession workstream, which has its own gate and
+ * must not ride a provenance fix.
  */
 export function detectChains(memories: MemoryItem[]): {
   supersededBy: Map<string, string>;
@@ -62,9 +74,12 @@ export function detectChains(memories: MemoryItem[]): {
   const childrenOf = new Map<string, string[]>(); // parent_id → [child_ids]
   const hasParent = new Set<string>();
 
+  // The temporal predecessor — NOT derived_from, which is author-declared provenance.
+  const chainParents = (mem: MemoryItem): string[] =>
+    mem.provenance.previous_memory_id ? [mem.provenance.previous_memory_id] : [];
+
   for (const mem of memories) {
-    const parentIds = mem.provenance.derived_from || [];
-    for (const parentId of parentIds) {
+    for (const parentId of chainParents(mem)) {
       hasParent.add(mem.id);
       const children = childrenOf.get(parentId) || [];
       children.push(mem.id);
@@ -90,8 +105,7 @@ export function detectChains(memories: MemoryItem[]): {
 
   // Detect broken chains: memory references a parent not in our result set
   for (const mem of memories) {
-    const parentIds = mem.provenance.derived_from || [];
-    for (const parentId of parentIds) {
+    for (const parentId of chainParents(mem)) {
       if (!idSet.has(parentId)) {
         brokenChains.add(mem.id);
       }

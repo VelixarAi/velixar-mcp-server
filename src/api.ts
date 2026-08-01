@@ -517,6 +517,9 @@ interface RawMemory {
   previous_memory_id?: string | null;
   timestamp?: string;
   origin?: MemoryOrigin;
+  /** author-declared derivation — the REAL provenance edge */
+  references?: string[];
+  is_origin?: boolean;
 }
 
 function inferMemoryType(raw: RawMemory | ValidatedRawMemory): MemoryType {
@@ -545,7 +548,22 @@ export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem
       created_at: raw.created_at || '',
       updated_at: raw.updated_at || raw.created_at || '',
       last_touched: raw.created_at || '',
-      derived_from: raw.previous_memory_id ? [raw.previous_memory_id] : undefined,
+      // PROVENANCE IS DECLARED, NEVER INFERRED.
+      //
+      // This line used to read:
+      //     derived_from: raw.previous_memory_id ? [raw.previous_memory_id] : undefined
+      // which manufactured a derivation edge out of the TEMPORAL CHAIN. "Stored after" is
+      // not "reasoned from". Every memory with a predecessor was reported as derived from
+      // it — a provenance claim no author ever made — while the backend's REAL
+      // author-declared field (`references`) was dropped by the validator and never
+      // surfaced at all. That is why `inspect` and `lineage` disagreed: lineage walks the
+      // real edges, inspect showed the invented ones.
+      //
+      // Luke caught this exact previous/parent/derived conflation on the WRITE path
+      // (source_ids were collapsed into previous_memory_id[0]); it survived on the read path.
+      derived_from: raw.references?.length ? raw.references : undefined,
+      previous_memory_id: raw.previous_memory_id ?? null,
+      is_origin: raw.is_origin ?? (raw.references !== undefined ? raw.references.length === 0 : undefined),
     },
     origin: raw.origin,
   };

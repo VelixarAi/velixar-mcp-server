@@ -45,6 +45,12 @@ export interface ValidatedRawMemory {
   created_at?: string;
   updated_at?: string;
   previous_memory_id?: string | null;
+  /** AUTHOR-DECLARED derivation ("B was reasoned FROM A"). The backend's real provenance
+   *  edge. It was being dropped here entirely, which is half of why the client then
+   *  invented one from previous_memory_id. */
+  references?: string[];
+  /** Empty references is a first-class auditable state: learned fresh, no prior context. */
+  is_origin?: boolean;
   origin?: import('./types.js').MemoryOrigin;
 }
 
@@ -105,6 +111,8 @@ function validateRawMemory(m: unknown, endpoint: string): ValidatedRawMemory | n
     created_at: str(o.created_at),
     updated_at: str(o.updated_at),
     previous_memory_id: str(o.previous_memory_id) ?? null,
+    references: arr(o.references)?.filter((r): r is string => typeof r === 'string'),
+    is_origin: typeof o.is_origin === 'boolean' ? o.is_origin : undefined,
     origin: validateOrigin(o.origin),
   };
 }
