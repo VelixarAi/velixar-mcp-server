@@ -329,10 +329,21 @@ export async function handleRetrievalTool(
       const temporalHealth = {
         stale_warning: false,
         evolution_detected: false,
+        // coverage_ratio is RETRIEVAL COMPLETENESS — how much of what a broad search
+        // would surface you already hold. It is NOT evidence that the corpus answers the
+        // question, and it moves the WRONG WAY if read that way: a topic the corpus knows
+        // little about yields fewer broad hits, a smaller denominator, and therefore a
+        // HIGHER ratio. Measured on LoCoMo: mean 0.536 where the answer was ABSENT vs
+        // 0.464 where it was PRESENT.
+        //
+        // "Coverage is adequate for synthesis" therefore licensed synthesis on a number
+        // that INFLATES precisely when the corpus cannot answer — the same defect class
+        // as the prepare_context adequacy claim (C1.d), fixed there and missed here. A
+        // high ratio now says only that fetching more is unlikely to help.
         suggestion: result.coverage_ratio === null
           ? 'No relevant memories exist for this topic — coverage is UNKNOWN; do not synthesize from memory.'
           : result.coverage_ratio >= 0.7
-            ? 'Coverage is adequate for synthesis.'
+            ? 'You already hold most of what a broader search would surface, so fetching more is unlikely to help. This does NOT establish that the corpus answers the question — verify each claim against the retrieved text.'
             : `Coverage is ${Math.round(result.coverage_ratio * 100)}% — consider retrieving more context or explicitly declaring gaps.`,
       };
 
@@ -349,13 +360,16 @@ export async function handleRetrievalTool(
           ...result,
           gaps: structuredGaps,
           temporal_health: temporalHealth,
+          // Every value names RETRIEVAL explicitly. A bare "high" under a field called
+          // confidence_assessment reads as confidence in the ANSWER, which this number
+          // cannot support — see the note on `suggestion` above.
           confidence_assessment: result.coverage_ratio === null
             ? 'unknown — no relevant memories exist for this topic'
             : result.coverage_ratio >= 0.8
-              ? 'high — most relevant context retrieved'
+              ? 'retrieval-complete — most available context is in hand (says nothing about whether it answers the question)'
               : result.coverage_ratio >= 0.5
-                ? 'medium — significant gaps remain'
-                : 'low — most relevant context not yet retrieved',
+                ? 'retrieval-partial — significant relevant context not yet retrieved'
+                : 'retrieval-incomplete — most relevant context not yet retrieved',
           ...(autoRetrievedMemories ? { auto_retrieved: autoRetrievedMemories, auto_retrieve_count: autoRetrievedMemories.length } : {}),
         }, config, {
           data_absent: result.total_relevant === 0,
