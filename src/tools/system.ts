@@ -195,21 +195,50 @@ export async function handleSystemTool(
         tier_info: (() => { const t = parseInt(process.env.VELIXAR_TOOL_TIER || '3', 10); return t === 1 ? 'minimal (9 tools)' : t === 2 ? 'standard (~20 tools)' : 'full (all tools)'; })(),
         resources: resourceUris,
         prompts: promptNames,
+        // ── what this list is, and what it is NOT (2026-08-01) ──────────────
+        // Every entry used to be the literal `true`. Nothing measured any of them, so
+        // this was a CLAIM presented as a capability report — and it stayed `true` while
+        // a capability was dead. Verified against prod on 2026-08-01:
+        //
+        //   identity  advertised true, snapshot_count 0 and thought_trace_count 0. The
+        //             read path worked; its only writer was in commit_worker.py, an
+        //             SQS-driven AWS Lambda, and the platform moved AWS -> GCP -> Azure.
+        //             The producer belonged to a dead deployment architecture.
+        //   patterns  advertised true while velixar_patterns ITSELF returns
+        //             `not_implemented: no pattern extraction runs in this path yet`
+        //             (tools/recall.ts). The capability list contradicted the tool.
+        //   timeline  advertised as a general capability; it is scoped to org_memories
+        //             append/pin events, not the memory corpus.
+        //
+        // A flag that cannot be false is not a report. These now describe STATE, and
+        // anything not proven to produce output says so rather than claiming `true`.
+        // `scripts/verify-capabilities.mjs` probes the live corpus and fails when an
+        // advertised capability produces nothing.
         features: {
+          // Enforced structurally (per-workspace collections + the visibility contract).
           workspace_isolation: true,
-          identity: true,
+          // Verified producing output in prod.
           graph: true,
-          contradictions: true,
-          timeline: true,
-          patterns: true,
-          distill: true,
           justification: true,
+          audit_log: true,
+          contradictions: 'detection_only',   // records exist; nothing acts on them
+          // Opt-in per workspace: OFF until enabled, because it costs per write.
+          identity: 'opt_in',
+          // Reachable, but scoped to org_memories lifecycle events, not the corpus.
+          timeline: 'org_memories_only',
+          // The tool itself declares not_implemented — do not claim it here.
+          patterns: false,
+          // Client-side capabilities: true by construction, they are this process.
+          distill: true,
           batch_operations: true,
           session_persistence: true,
           circuit_breaker: true,
           structured_errors: process.env.VELIXAR_STRUCTURED_ERRORS === 'true',
-          audit_log: true,
         },
+        features_note:
+          'Values describe STATE, not intent. `true` means verified to produce output; a '
+          + 'string names the limitation; `false` means not implemented. Run '
+          + 'scripts/verify-capabilities.mjs to re-measure against a live corpus.',
         security_mode: currentSecurityMode,
         version: VERSION,
       }, config)),
