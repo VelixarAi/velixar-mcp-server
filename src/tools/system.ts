@@ -77,11 +77,13 @@ export const systemTools: Tool[] = [
     name: 'velixar_security',
     description:
       'Get or set the security scanning mode for memory content. ' +
-      'Modes: "standard" (default), "strict" (PII redaction), "off" (no scanning).',
+      'Modes: "permissive" (default), "strict" (PII redaction), "off" (no scanning).',
     inputSchema: {
       type: 'object',
       properties: {
-        mode: { type: 'string', enum: ['standard', 'strict', 'off'], description: 'Security mode to set (omit to get current)' },
+        // The API's enum is strict|permissive|off. This offered 'standard' as its DEFAULT —
+        // a value the API rejects — so the advertised default could never be set.
+        mode: { type: 'string', enum: ['permissive', 'strict', 'off'], description: 'Security mode to set (omit to get current)' },
       },
     },
   },
@@ -250,10 +252,15 @@ export async function handleSystemTool(
     if (mode) {
       let verified = false;
       try {
-        await api.patch('/settings/security', { mode });
-        const readback = await api.get<{ mode?: string }>('/settings/security', true);
-        verified = readback.mode === mode;
-        currentSecurityMode = readback.mode || mode;
+        // FIELD NAMES, verified against the API 2026-08-02. This sent `{ mode }` and read
+        // back `.mode`; the API reads `body.get("security_mode")` and returns
+        // `security_mode`. So every set was a 400 ("security_mode must be strict,
+        // permissive, or off") and `verified` could never be true — velixar_security's
+        // set path has never worked. The tool still returned updated:true.
+        await api.patch('/settings/security', { security_mode: mode });
+        const readback = await api.get<{ security_mode?: string }>('/settings/security', true);
+        verified = readback.security_mode === mode;
+        currentSecurityMode = readback.security_mode || mode;
       } catch {
         currentSecurityMode = mode;
         verified = false;
