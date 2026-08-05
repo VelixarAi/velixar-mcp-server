@@ -13,6 +13,20 @@ import { noteFromHeader, takeUpdateNotice } from './update_notice.js';
 let _lastVolumeId: string | null = null;
 export function getLastVolumeId(): string | null { return _lastVolumeId; }
 
+/** The backend's own "this read did not complete" signal, awaiting consumption by the
+ *  next `makeMeta`. Take-once, like `takeUpdateNotice`: a tool call may issue several
+ *  requests, and if ANY of them degraded, that call's envelope must not claim a measured
+ *  negative. Conservative in the only safe direction — over-reporting degradation costs a
+ *  caveat, under-reporting it manufactures a false fact. */
+let _degradedNotice: string | null = null;
+export function takeDegradedNotice(): string | null {
+  const d = _degradedNotice;
+  _degradedNotice = null;
+  return d;
+}
+/** Test seam: assert the notice is cleared between calls without a live API. */
+export function _setDegradedNoticeForTest(v: string | null): void { _degradedNotice = v; }
+
 // ── Workspace Resolution ──
 
 function resolveWorkspace(): { id: string; source: ApiConfig['workspaceSource'] } {
@@ -385,6 +399,32 @@ export class ApiClient {
         const vol = res.headers.get('x-velixar-volume');
         if (vol) _lastVolumeId = vol;
 
+        // DEGRADED READS ARE NOT ABSENCE (prod, 2026-08-04).
+        //
+        // The backend already tells us when a read did not complete: on a search failure
+        // it falls back to a KG keyword scan and answers 200 with `_degraded: true` and a
+        // `_degraded_reason`. This client discarded both, and every downstream tool then
+        // computed `data_absent: results.length === 0` — so a failed read was reshaped
+        // into a confident, affirmative "we looked and found nothing".
+        //
+        // Observed: `velixar_search(after=...)` returned `data_absent: true,
+        // absence_reason: "no_data"` while the REST payload underneath it said
+        // `_degraded_reason: "Qdrant unavailable ('>' not supported between instances of
+        // 'str' and 'datetime.datetime')"`. The backend was honest; the reshaping layer
+        // was not. Per FIELD_DICTIONARY, an agent reads absence as evidence — so this did
+        // not merely fail, it misinformed.
+        //
+        // Captured HERE, at the one place every response is parsed, rather than in each
+        // tool: there are a dozen `data_absent: x.length === 0` sites and a fix applied to
+        // the ones we remembered would leave the rest to relearn this.
+        const _deg = (data as Record<string, unknown> | null)?.['_degraded'];
+        if (_deg) {
+          const reason = (data as Record<string, unknown>)['_degraded_reason'];
+          _degradedNotice = typeof reason === 'string' && reason
+            ? reason
+            : 'the backend reported this read as degraded but gave no reason';
+        }
+
         if (this.config.debug) {
           log('debug', 'api_call', { path, duration_ms: duration });
         }
@@ -628,10 +668,32 @@ export function makeMeta(config: ApiConfig, overrides: Partial<ResponseMeta> = {
     // H8: If data_absent, require absence_reason
     ...(overrides.data_absent && !overrides.absence_reason ? { absence_reason: 'no_data' as const } : {}),
   };
+  // A DEGRADED READ OVERRIDES EVERY ABSENCE CLAIM IN THIS ENVELOPE.
+  //
+  // `absence_reason: 'retrieval_incomplete'` already existed with exactly the right
+  // definition — "the lookup did not finish. NOT absence: nothing was learned about
+  // whether the data exists" — and nothing ever set it from the backend's own signal.
+  // `data_absent` becomes FALSE, not true: we did not learn that the data is missing, we
+  // learned that we failed to look. That is the same shape `construction.ts` already used
+  // for `retrievalStatus !== 'ok'`; this generalises it to every tool instead of the three
+  // that remembered.
+  const _degraded = takeDegradedNotice();
+  if (_degraded) {
+    meta.data_absent = false;
+    meta.absence_reason = 'retrieval_incomplete';
+    meta.partial_context = true;
+    meta.retrieval_degraded = _degraded;
+  }
+
   // H30: Early-exit signal — sufficient when data present, confident, no contradictions
   if (meta.sufficient_answer === undefined) {
     meta.sufficient_answer = !meta.data_absent && !meta.partial_context && !meta.contradictions_present && meta.confidence >= 0.7;
   }
+  // A caller must never early-exit on a read that did not happen. This is set AFTER the
+  // computation above because a tool may pass `sufficient_answer` explicitly, and an
+  // explicit `true` from a tool that could not see the degradation is exactly the claim
+  // being prevented.
+  if (_degraded) meta.sufficient_answer = false;
   // Update nudge: if either signal (A: response header, B: npm self-check) marked us
   // behind, surface it ONCE here, on the first tool response after it was learned.
   const _upd = takeUpdateNotice();

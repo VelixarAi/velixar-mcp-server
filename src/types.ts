@@ -18,6 +18,10 @@ export interface ResponseMeta {
   cached?: boolean;
   // H30: Early-exit signal for workflow prompts — LLM can stop if true
   sufficient_answer?: boolean;
+  // Set when the BACKEND declared its own read degraded (`_degraded` on the payload).
+  // Carries the backend's stated reason verbatim. Present only when a read did not
+  // complete normally, so an agent can tell "we failed" from "there is nothing there".
+  retrieval_degraded?: string;
   // Set once per session when a newer velixar-mcp-server is available (the client
   // is running a stale/pinned build). Surfaced so the agent — and through it the
   // user — sees the nudge on the next tool call. Absent when the client is current.
