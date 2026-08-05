@@ -165,12 +165,21 @@ export interface IdentityContradiction {
 
 export interface ContradictionResult {
   id: string;
-  statement_a: string;
-  statement_b: string;
+  /** The contradicting sentences. OPTIONAL and normally ABSENT: the detector stores two
+   *  memory ids and a reason, never the statements themselves, so there is no statement
+   *  text anywhere in the pipeline. Resolve them with `velixar_inspect` on the ids below.
+   *  Absent means "not supplied"; it must never be emitted as '' , which would assert
+   *  that the statement is empty. */
+  statement_a?: string;
+  statement_b?: string;
   memory_id_a?: string;
   memory_id_b?: string;
-  severity: 'low' | 'medium' | 'high';
-  confidence: number;
+  /** Absent when neither stored nor derivable. `severity` is NOT written by any producer;
+   *  when it is derived from `confidence`, `severity_derived_from` says so, because a
+   *  derived value is legitimate and an invented one presented as recorded is not. */
+  severity?: 'low' | 'medium' | 'high' | string;
+  severity_derived_from?: 'confidence';
+  confidence?: number;
   explanation?: string;
   workspace_id: string;
   detected_at: string;

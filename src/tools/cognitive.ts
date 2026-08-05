@@ -4,7 +4,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
 import { normalizeMemory, userParams, withUser, wrapResponse } from '../api.js';
-import type { ApiConfig, MemoryItem } from '../types.js';
+import type { ApiConfig, ContradictionResult, MemoryItem } from '../types.js';
 import { justify } from '../justify.js';
 import { validateIdentityResponse, validateSearchResponse } from '../validate.js';
 
@@ -277,7 +277,13 @@ export async function handleCognitiveTool(
     // classify as "superseded" (temporal update) rather than "contradiction"
     const SUPERSESSION_DAYS = 7;
 
-    const items = rawContradictions.map((c: Record<string, unknown>) => {
+    // Annotated, not inferred: the conditional spreads below produce a union of shapes
+    // otherwise, and the union is what let `severity` be read at one call site while
+    // being absent at another. The contract lives in types.ts; this states it.
+    type ContradictionItem = ContradictionResult & {
+      classification: 'contradiction' | 'superseded';
+    };
+    const items: ContradictionItem[] = rawContradictions.map((c: Record<string, unknown>): ContradictionItem => {
       const detectedA = String(c.memory_a_created_at || c.created_at_a || '');
       const detectedB = String(c.memory_b_created_at || c.created_at_b || '');
       let classification: 'contradiction' | 'superseded' = 'contradiction';
@@ -291,15 +297,48 @@ export async function handleCognitiveTool(
         }
       }
 
+      // THE FIELD NAMES COME FROM THE TABLE, NOT FROM THIS TOOL'S VOCABULARY.
+      // `/exocortex/contradictions` serves `select("*")`, so the writer's columns arrive
+      // verbatim and nothing in the backend ever renamed them. This mapping read
+      // `memory_a_id` / `explanation`, which no writer has ever produced, so every
+      // substantive field came back `''` while `confidence` and `detected_at` — the two
+      // that happened to share a name — came through populated. The tool reported that a
+      // contradiction existed and could say nothing about it.
+      // Old names kept as fallbacks: harmless, and they cost nothing if the API ever
+      // does start renaming.
+      const memoryIdA = String(c.left_memory_id ?? c.memory_a_id ?? '');
+      const memoryIdB = String(c.right_memory_id ?? c.memory_b_id ?? '');
+      const explanation = String(c.reason ?? c.explanation ?? c.description ?? '');
+      const confidence = typeof c.confidence === 'number' ? c.confidence : undefined;
+
+      // SEVERITY IS NOT STORED. The column exists and no writer sets it — the detector
+      // inserts workspace_id/left/right/reason/confidence/status and nothing else. This
+      // used to default the absent value to 'medium', and `severity_min` then FILTERED on
+      // that fabrication: a real 0.9-confidence contradiction was dropped by
+      // severity_min=0.75 on the strength of a severity nobody assigned, while
+      // `confidence` — the number that would have answered correctly — sat in the same row
+      // being shadowed by it.
+      // Derive it from confidence, and SAY that it was derived. A derived value is
+      // legitimate; an invented one presented as recorded is not.
+      const storedSeverity = typeof c.severity === 'string' && c.severity ? c.severity : null;
+      const derivedSeverity = confidence === undefined ? null
+        : confidence >= 0.75 ? 'high' : confidence >= 0.5 ? 'medium' : 'low';
+
       return {
         id: String(c.id || ''),
-        statement_a: String(c.statement_a || c.memory_a_content || ''),
-        statement_b: String(c.statement_b || c.memory_b_content || ''),
-        memory_id_a: String(c.memory_a_id || ''),
-        memory_id_b: String(c.memory_b_id || ''),
-        severity: String(c.severity || 'medium'),
-        confidence: typeof c.confidence === 'number' ? c.confidence : 0.5,
-        explanation: String(c.explanation || c.description || ''),
+        // `statement_a`/`statement_b` are NOT a rename — no statement text exists anywhere
+        // in the pipeline. The detector stores two memory ids and a reason; it never stores
+        // the contradicting sentences. So these are OMITTED rather than emitted as '': an
+        // empty string asserts "there is no statement here", absence says "we are not
+        // supplying this". The ids below are what makes the tool's own next_step —
+        // "use velixar_inspect on linked memory IDs" — actually followable.
+        memory_id_a: memoryIdA,
+        memory_id_b: memoryIdB,
+        ...(storedSeverity ? { severity: storedSeverity }
+          : derivedSeverity ? { severity: derivedSeverity, severity_derived_from: 'confidence' as const }
+            : {}),
+        ...(confidence !== undefined ? { confidence } : {}),
+        ...(explanation ? { explanation } : {}),
         workspace_id: config.workspaceId,
         detected_at: String(c.detected_at || c.created_at || ''),
         classification,
@@ -312,17 +351,29 @@ export async function handleCognitiveTool(
     // Phase 0 filters: topic and severity
     let filtered = activeContradictions;
     if (args.topic) {
+      // This searched `statement_a`/`statement_b`/`explanation` — all three of which were
+      // ALWAYS EMPTY under the old mapping, so `topic` could never match anything and
+      // reported the miss as a clean empty result rather than as a filter that cannot work.
+      // `explanation` now carries the detector's reason, which is the only free text this
+      // surface has; statements are not stored at all (see the mapping above).
       const topicLower = (args.topic as string).toLowerCase();
-      filtered = filtered.filter(i =>
-        i.statement_a.toLowerCase().includes(topicLower) ||
-        i.statement_b.toLowerCase().includes(topicLower) ||
-        i.explanation.toLowerCase().includes(topicLower),
-      );
+      filtered = filtered.filter(i => (i.explanation ?? '').toLowerCase().includes(topicLower));
     }
     if (args.severity_min !== undefined) {
       const severityMap: Record<string, number> = { low: 0.25, medium: 0.5, high: 0.75, critical: 1.0 };
       const minSev = args.severity_min as number;
-      filtered = filtered.filter(i => (severityMap[i.severity] ?? i.confidence) >= minSev);
+      // Rank on CONFIDENCE, which is recorded, in preference to a severity band that is
+      // usually derived from that same confidence — going through the band would quantise
+      // 0.9 down to 0.75 and drop rows a caller explicitly asked for. A stored severity
+      // still wins when one exists, because that is a human judgement the number is not.
+      // A row with neither is not silently ranked at zero: it is kept, because a filter
+      // must not use absence as grounds for exclusion.
+      filtered = filtered.filter((i) => {
+        if (i.confidence !== undefined && i.severity_derived_from === 'confidence') return i.confidence >= minSev;
+        if (i.severity !== undefined) return (severityMap[i.severity] ?? i.confidence ?? 1) >= minSev;
+        if (i.confidence !== undefined) return i.confidence >= minSev;
+        return true;
+      });
     }
 
     return {
