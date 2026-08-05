@@ -6,6 +6,9 @@ on:
     paths: ['src/**']
   schedule:
     - cron: '0 6 * * 1' # Weekly Monday 6am UTC
+  # On-demand. A pipeline you cannot trigger is one you cannot verify a fix against —
+  # this one sat red for 8 runs partly because reproducing it meant waiting for a src push.
+  workflow_dispatch:
 
 jobs:
   host-compat:
@@ -21,5 +24,20 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+      # This probe exercises the MCP PROTOCOL — handshake, tool listing, host-specific
+      # client quirks — entirely in-process. It never calls the backend, so it needs a key
+      # only because the server refuses to boot without one. A DELIBERATELY FAKE value is
+      # therefore correct and a real credential would be strictly worse: it would put a
+      # production key in CI to satisfy a check that cannot use it.
+      #
+      # DO NOT "fix" this by adding a secret. If a future check genuinely needs the
+      # backend, give it its own scoped key and its own job — do not widen this one.
+      #
+      # This workflow failed 8 runs in a row (2026-08-01 → 2026-08-05) because it passed no
+      # key at all and died at boot, before exercising anything. A pipeline that is
+      # permanently red for a reason nobody can act on teaches everyone to ignore its colour
+      # — the same failure the KG canary had. All five hosts pass; they always would have.
       - name: Simulate ${{ matrix.host }} MCP client
+        env:
+          VELIXAR_API_KEY: vlx_ci_not_a_real_key
         run: node scripts/host-compat-test.js ${{ matrix.host }}
