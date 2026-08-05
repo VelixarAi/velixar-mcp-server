@@ -169,7 +169,7 @@ export async function handleCognitiveTool(
         content,
         tier: 0, // pinned — identity is durable
         tags: ['identity', `identity:${field}`],
-        author: { type: 'user' },
+        author: { type: 'agent' }, // was { type: 'user' } — an MCP write is an agent write
       }));
 
       // H10: Track identity update
@@ -254,7 +254,7 @@ export async function handleCognitiveTool(
         await api.post('/memory', withUser(config, {
           content: `[contradiction-resolved:${contradictionId}] ${resolution}`,
           tags: ['contradiction-resolution', `contradiction:${contradictionId}`],
-          author: { type: 'user' },
+          author: { type: 'agent' }, // was { type: 'user' } — an MCP write is an agent write
         }));
         return {
           text: JSON.stringify(wrapResponse(
@@ -496,7 +496,7 @@ export async function handleCognitiveTool(
         await api.post('/memory', withUser(config, {
           content: `[pattern-dismissed:${patternId}]`,
           tags: ['pattern-dismissed', `pattern:${patternId}`],
-          author: { type: 'user' },
+          author: { type: 'agent' }, // was { type: 'user' } — an MCP write is an agent write
         }));
       }
       return {

@@ -51,6 +51,11 @@ export interface ValidatedRawMemory {
   references?: string[];
   /** Empty references is a first-class auditable state: learned fresh, no prior context. */
   is_origin?: boolean;
+  /** The backend's authoritative provenance CLASS (user | agent | upload | session |
+   *  connected | external | converged). It was never declared here, so the validator
+   *  silently DROPPED it — which is why the client had nothing to derive an author from
+   *  and invented one instead. */
+  source_class?: string;
   origin?: import('./types.js').MemoryOrigin;
 }
 
@@ -113,6 +118,7 @@ function validateRawMemory(m: unknown, endpoint: string): ValidatedRawMemory | n
     previous_memory_id: str(o.previous_memory_id) ?? null,
     references: arr(o.references)?.filter((r): r is string => typeof r === 'string'),
     is_origin: typeof o.is_origin === 'boolean' ? o.is_origin : undefined,
+    source_class: str(o.source_class),
     origin: validateOrigin(o.origin),
   };
 }

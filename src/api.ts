@@ -4,7 +4,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ApiConfig, ApiTiming, MemoryItem, MemoryOrigin, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
+import type { ApiConfig, ApiTiming, Author, MemoryItem, MemoryOrigin, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
 import type { ValidatedRawMemory } from './validate.js';
 import { VERSION } from './version.js';
 import { noteFromHeader, takeUpdateNotice } from './update_notice.js';
@@ -520,6 +520,42 @@ interface RawMemory {
   /** author-declared derivation — the REAL provenance edge */
   references?: string[];
   is_origin?: boolean;
+  /** The backend's authoritative provenance class. Present on every REST row. */
+  source_class?: string;
+  /** Only if a projection ever emits it. No REST projection does today. */
+  last_touched?: string;
+}
+
+/** Derive the author from the backend's `source_class` — NEVER a default.
+ *
+ *  This replaced `author: { type: 'user' }`, a HARDCODED LITERAL applied to every memory
+ *  the server returned. It claimed a human wrote rows that agents, connectors, uploads and
+ *  background workers wrote, and it did so on a provenance product, on the read path that
+ *  every consuming model sees.
+ *
+ *  The server already answers this question and answers it carefully: `source_class` is
+ *  computed from the write path and its principal, and its module states the rule this
+ *  function now honours — it will not guess USER, because "a human-vouched label is the one
+ *  thing a provenance product must never fabricate". The class was arriving on every row and
+ *  being discarded by the validator, so the client had nothing left to read and substituted
+ *  a guess for the answer it had thrown away.
+ *
+ *  Anything unrecognised or absent maps to `unknown`, matching how the origin envelope
+ *  already treats an unrecognised client. `unknown` is a claim we can defend. */
+function authorFrom(raw: RawMemory | ValidatedRawMemory): Author {
+  switch ((raw as RawMemory).source_class) {
+    case 'user':      return { type: 'user' };
+    case 'agent':     return { type: 'agent' };
+    case 'session':   return { type: 'agent' };
+    // A connector, an external system or a convergence pass is machinery, not a person.
+    case 'connected':
+    case 'external':
+    case 'converged':
+    case 'upload':    return { type: 'pipeline' };
+    // `unattributed` is the backend's DEFECT MARKER, never a resting state — surface it as
+    // unknown rather than laundering a known-bad record into a confident label.
+    default:          return { type: 'unknown' };
+  }
 }
 
 function inferMemoryType(raw: RawMemory | ValidatedRawMemory): MemoryType {
@@ -530,7 +566,11 @@ function inferMemoryType(raw: RawMemory | ValidatedRawMemory): MemoryType {
 function inferSourceType(raw: RawMemory | ValidatedRawMemory): SourceType {
   if (raw.type === 'distill') return 'distill';
   if (raw.type === 'inferred') return 'inferred';
-  return 'user';
+  // Was `return 'user'`. Identical defect to the author literal: a fallback that asserts a
+  // human when nothing was established. Only claim `user` when the backend's own
+  // classification says so; otherwise say we do not know.
+  if ((raw as RawMemory).source_class === 'user') return 'user';
+  return 'unknown';
 }
 
 export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem {
@@ -541,13 +581,17 @@ export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem
     tags: raw.tags || [],
     memory_type: inferMemoryType(raw),
     source_type: inferSourceType(raw),
-    author: { type: 'user' },
+    author: authorFrom(raw),
     relevance: raw.score,
     confidence: raw.salience,
     provenance: {
       created_at: raw.created_at || '',
-      updated_at: raw.updated_at || raw.created_at || '',
-      last_touched: raw.created_at || '',
+      // NOT `|| created_at`. A memory that was never updated has no update time, and
+      // saying otherwise manufactures an event. Absent is the truthful answer.
+      ...(raw.updated_at ? { updated_at: raw.updated_at } : {}),
+      // `last_touched` was `created_at` wearing a second name, asserting an access that
+      // never happened. Emitted ONLY if a projection actually reports one.
+      ...((raw as RawMemory).last_touched ? { last_touched: (raw as RawMemory).last_touched as string } : {}),
       // PROVENANCE IS DECLARED, NEVER INFERRED.
       //
       // This line used to read:

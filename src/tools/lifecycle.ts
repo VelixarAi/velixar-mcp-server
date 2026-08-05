@@ -768,7 +768,7 @@ export async function handleLifecycleTool(
           content: item.content,
           tier: item.tier ?? 2,
           tags: item.tags || autoTags(item.content),
-          author: { type: 'user' },
+          author: { type: 'agent' }, // was { type: 'user' } — an MCP write is an agent write
           source_type: 'mcp_batch',
         }));
         if (res.id) recordIdempotency(config.workspaceId, item.content, res.id);

@@ -51,8 +51,13 @@ export interface VelixarError {
 // ── Memory ──
 
 export type MemoryType = 'episodic' | 'semantic';
-export type SourceType = 'user' | 'distill' | 'inferred' | 'imported';
-export type AuthorType = 'user' | 'agent' | 'pipeline' | 'distill';
+/** `unknown` is a FIRST-CLASS value, not a gap. The backend's provenance doctrine is
+ *  explicit that it will not guess USER — "absent evidence of a person, the answer is
+ *  never 'a person'" — and this client must not re-introduce the guess the server
+ *  refused to make. Mirrors the origin envelope, where an unrecognised client stamps
+ *  `unknown` rather than an invented identity. */
+export type SourceType = 'user' | 'distill' | 'inferred' | 'imported' | 'unknown';
+export type AuthorType = 'user' | 'agent' | 'pipeline' | 'distill' | 'unknown';
 
 export interface Author {
   type: AuthorType;
@@ -62,7 +67,9 @@ export interface Author {
 
 export interface Provenance {
   created_at: string;
-  updated_at: string;
+  /** ABSENT when the backend did not send one. It used to fall back to `created_at`,
+   *  which asserted an update that never happened. */
+  updated_at?: string;
   /** AUTHOR-DECLARED derivation only ("B was reasoned FROM A"). NEVER inferred, and never
    *  the temporal chain — see previous_memory_id below. */
   derived_from?: string[];
@@ -71,7 +78,10 @@ export interface Provenance {
   previous_memory_id?: string | null;
   /** True when the author declared no sources — learned fresh. Auditable, not a gap. */
   is_origin?: boolean;
-  last_touched: string;
+  /** ABSENT unless the backend reports it. This used to be `created_at` under a second
+   *  name, which claimed an access that never occurred. No REST projection emits it
+   *  today, so it is normally absent — and absence is the honest answer. */
+  last_touched?: string;
 }
 
 /** Which tool drove the write, over which pipe. `stamped: true` is a recorded
