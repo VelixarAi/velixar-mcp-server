@@ -4,7 +4,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
-import { normalizeMemory, userParams, wrapResponse } from '../api.js';
+import { normalizeMemory, userParams, wrapResponse, toRawMemory } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { justify } from '../justify.js';
 import { validateSearchResponse, validateListResponse, validateOverviewResponse } from '../validate.js';
@@ -243,18 +243,7 @@ export async function handleRecallTool(
     if (!result.memory || typeof result.memory !== 'object') throw new Error(`Memory ${id} not found`);
 
     const rawMem = result.memory as Record<string, unknown>;
-    const mem = normalizeMemory({
-      id: String(rawMem.id || ''),
-      content: String(rawMem.content || ''),
-      score: typeof rawMem.score === 'number' ? rawMem.score : undefined,
-      tier: typeof rawMem.tier === 'number' ? rawMem.tier : undefined,
-      type: typeof rawMem.type === 'string' ? rawMem.type : null,
-      tags: Array.isArray(rawMem.tags) ? rawMem.tags.filter((t): t is string => typeof t === 'string') : [],
-      salience: typeof rawMem.salience === 'number' ? rawMem.salience : undefined,
-      created_at: typeof rawMem.created_at === 'string' ? rawMem.created_at : undefined,
-      updated_at: typeof rawMem.updated_at === 'string' ? rawMem.updated_at : undefined,
-      previous_memory_id: typeof rawMem.previous_memory_id === 'string' ? rawMem.previous_memory_id : null,
-    });
+    const mem = normalizeMemory(toRawMemory(rawMem));
     mem.workspace_id = config.workspaceId;
 
     // H17: Validate provenance — check derived_from IDs exist

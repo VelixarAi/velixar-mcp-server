@@ -504,7 +504,7 @@ export class ApiClient {
 // Backend returns raw shapes; normalize to VelixarResponse<T> with MemoryItem.
 
 /** Raw memory shape from backend — use ValidatedRawMemory from validate.ts for new code */
-interface RawMemory {
+export interface RawMemory {
   id: string;
   content: string;
   score?: number;
@@ -524,6 +524,39 @@ interface RawMemory {
   source_class?: string;
   /** Only if a projection ever emits it. No REST projection does today. */
   last_touched?: string;
+}
+
+/** Coerce a raw `/memory/{id}` payload into RawMemory — THE ONE PLACE THIS LIST LIVES.
+ *
+ *  Three call sites (recall/inspect, cognitive/timeline, construction) each hand-rolled
+ *  their own whitelist of fields to hand normalizeMemory. All three omitted `source_class`,
+ *  `references`, `is_origin` and `origin`, so on those surfaces the author could not be
+ *  derived (it fell to `unknown` even though the server had sent `agent`) and declared
+ *  provenance was dropped entirely — which also meant inspect's H17 `derived_from`
+ *  validation could never fire, because the field it validates was always empty.
+ *
+ *  A field list maintained in four places drifts in four directions. This is the list. */
+export function toRawMemory(o: Record<string, unknown>): RawMemory {
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
+  return {
+    id: String(o.id || ''),
+    content: String(o.content || ''),
+    score: num(o.score),
+    tier: num(o.tier),
+    type: str(o.type) ?? null,
+    tags: Array.isArray(o.tags) ? o.tags.filter((t): t is string => typeof t === 'string') : [],
+    salience: num(o.salience),
+    created_at: str(o.created_at),
+    updated_at: str(o.updated_at),
+    previous_memory_id: str(o.previous_memory_id) ?? null,
+    // The four that every hand-rolled list forgot:
+    source_class: str(o.source_class),
+    references: Array.isArray(o.references) ? o.references.filter((r): r is string => typeof r === 'string') : undefined,
+    is_origin: typeof o.is_origin === 'boolean' ? o.is_origin : undefined,
+    origin: (o.origin && typeof o.origin === 'object') ? o.origin as MemoryOrigin : undefined,
+    last_touched: str(o.last_touched),
+  };
 }
 
 /** Derive the author from the backend's `source_class` — NEVER a default.

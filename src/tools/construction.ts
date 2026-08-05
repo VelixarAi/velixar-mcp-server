@@ -6,7 +6,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
 import type { ApiClient } from '../api.js';
-import { normalizeMemory, userParams, wrapResponse } from '../api.js';
+import { normalizeMemory, userParams, wrapResponse, toRawMemory } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { validateSearchResponse } from '../validate.js';
 import { validateCoverageResponse } from '../validate_retrieval.js';
@@ -205,15 +205,7 @@ export async function handleConstructionTool(
           const rObj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
           const memData = (rObj.memory && typeof rObj.memory === 'object') ? rObj.memory as Record<string, unknown> : null;
           if (memData) {
-            const mem = normalizeMemory({
-              id: String(memData.id || ''), content: String(memData.content || ''),
-              score: typeof memData.score === 'number' ? memData.score : undefined,
-              tier: typeof memData.tier === 'number' ? memData.tier : undefined,
-              type: typeof memData.type === 'string' ? memData.type : null,
-              tags: Array.isArray(memData.tags) ? memData.tags.filter((t): t is string => typeof t === 'string') : [],
-              created_at: typeof memData.created_at === 'string' ? memData.created_at : undefined,
-              previous_memory_id: typeof memData.previous_memory_id === 'string' ? memData.previous_memory_id : null,
-            });
+            const mem = normalizeMemory(toRawMemory(memData));
             mem.workspace_id = config.workspaceId;
             allMemories.push(mem);
           }

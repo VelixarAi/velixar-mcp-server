@@ -3,7 +3,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
-import { normalizeMemory, userParams, withUser, wrapResponse } from '../api.js';
+import { normalizeMemory, userParams, withUser, wrapResponse, toRawMemory } from '../api.js';
 import type { ApiConfig, MemoryItem } from '../types.js';
 import { justify } from '../justify.js';
 import { validateIdentityResponse, validateSearchResponse } from '../validate.js';
@@ -452,18 +452,7 @@ export async function handleCognitiveTool(
     if (!memResult || typeof memResult !== 'object' || !(memResult as Record<string, unknown>).memory) throw new Error(`Memory ${memoryId} not found`);
     const rawMem = (memResult as Record<string, unknown>).memory as Record<string, unknown>;
 
-    const normalized = normalizeMemory({
-      id: String(rawMem.id || ''),
-      content: String(rawMem.content || ''),
-      score: typeof rawMem.score === 'number' ? rawMem.score : undefined,
-      tier: typeof rawMem.tier === 'number' ? rawMem.tier : undefined,
-      type: typeof rawMem.type === 'string' ? rawMem.type : null,
-      tags: Array.isArray(rawMem.tags) ? rawMem.tags.filter((t): t is string => typeof t === 'string') : [],
-      salience: typeof rawMem.salience === 'number' ? rawMem.salience : undefined,
-      created_at: typeof rawMem.created_at === 'string' ? rawMem.created_at : undefined,
-      updated_at: typeof rawMem.updated_at === 'string' ? rawMem.updated_at : undefined,
-      previous_memory_id: typeof rawMem.previous_memory_id === 'string' ? rawMem.previous_memory_id : null,
-    });
+    const normalized = normalizeMemory(toRawMemory(rawMem));
     normalized.workspace_id = config.workspaceId;
 
     return {
