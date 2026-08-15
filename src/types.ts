@@ -106,6 +106,15 @@ export interface MemoryItem {
   provenance: Provenance;
   origin?: MemoryOrigin;
   contradiction_flags?: string[];
+  /** Present ONLY when this memory has been declared superseded. `status: "ratified"`
+   *  means governance accepted the replacement — read the successor (`by`) for current
+   *  state; this row's text is preserved history. `"proposed"` is an agent's opinion
+   *  awaiting ratification and does not change what is current. */
+  superseded?: {
+    by: string;
+    status: string | null;
+    reason: string | null;
+  };
 }
 
 // ── Graph ──

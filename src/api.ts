@@ -524,6 +524,12 @@ export interface RawMemory {
   source_class?: string;
   /** Only if a projection ever emits it. No REST projection does today. */
   last_touched?: string;
+  /** Supersession banner (server v60+): this row has been declared replaced. Null on
+   *  unstamped rows. Dropping these is how "backend honest, client lossy" happens —
+   *  a reader shown superseded text bare acts on dead state. */
+  superseded_by?: string | null;
+  supersession_status?: string | null;
+  superseded_reason?: string | null;
 }
 
 /** Coerce a raw `/memory/{id}` payload into RawMemory — THE ONE PLACE THIS LIST LIVES.
@@ -556,6 +562,9 @@ export function toRawMemory(o: Record<string, unknown>): RawMemory {
     is_origin: typeof o.is_origin === 'boolean' ? o.is_origin : undefined,
     origin: (o.origin && typeof o.origin === 'object') ? o.origin as MemoryOrigin : undefined,
     last_touched: str(o.last_touched),
+    superseded_by: str(o.superseded_by),
+    supersession_status: str(o.supersession_status),
+    superseded_reason: str(o.superseded_reason),
   };
 }
 
@@ -643,6 +652,17 @@ export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem
       is_origin: raw.is_origin ?? (raw.references !== undefined ? raw.references.length === 0 : undefined),
     },
     origin: raw.origin,
+    // The supersession banner. Emitted ONLY when the backend declared one — an absent
+    // field means "not superseded", never a default. This is the consumer half whose
+    // absence let every retrieval surface show retired text bare (the reason the
+    // READ-side exclusion flag was gated on this client change).
+    ...(raw.superseded_by ? {
+      superseded: {
+        by: raw.superseded_by,
+        status: raw.supersession_status ?? null,
+        reason: raw.superseded_reason ?? null,
+      },
+    } : {}),
   };
 }
 

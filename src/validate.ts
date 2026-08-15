@@ -57,6 +57,11 @@ export interface ValidatedRawMemory {
    *  and invented one instead. */
   source_class?: string;
   origin?: import('./types.js').MemoryOrigin;
+  /** Supersession banner (server v60+). Dropping these here is the exact validator-
+   *  whitelist failure that previously ate source_class/references/origin. */
+  superseded_by?: string | null;
+  supersession_status?: string | null;
+  superseded_reason?: string | null;
 }
 
 export interface ValidatedStoreResult {
@@ -120,6 +125,9 @@ function validateRawMemory(m: unknown, endpoint: string): ValidatedRawMemory | n
     is_origin: typeof o.is_origin === 'boolean' ? o.is_origin : undefined,
     source_class: str(o.source_class),
     origin: validateOrigin(o.origin),
+    superseded_by: str(o.superseded_by),
+    supersession_status: str(o.supersession_status),
+    superseded_reason: str(o.superseded_reason),
   };
 }
 
