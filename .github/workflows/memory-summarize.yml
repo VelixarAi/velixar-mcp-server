@@ -14,28 +14,42 @@ jobs:
         with:
           fetch-depth: 0
 
+      # ⚠️ UNTRUSTED INPUT GOES THROUGH `env:`, NEVER `${{ }}` INTERPOLATION INTO `run:`.
+      #
+      # This step used to expand `${{ github.event.pull_request.title }}` and `.body`
+      # directly into the shell script. A PR title containing backticks or $(...) executes
+      # arbitrary code on the runner, with the repo token in scope — the classic Actions
+      # script-injection. It also explains the one historical failure: a title carrying a
+      # quote or newline breaks the assignment before anything else runs.
+      #
+      # Passing them as environment variables makes them DATA. The shell never parses them.
       - name: Collect PR context
         id: context
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_BODY="${{ github.event.pull_request.body }}"
-          COMMITS=$(git log --oneline ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} | head -20)
-          FILES_CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} | head -30)
-          
-          # Build a single summarized memory instead of per-commit noise
-          SUMMARY="PR #${{ github.event.pull_request.number }}: ${PR_TITLE}"
-          if [ -n "$PR_BODY" ]; then
-            # Take first 500 chars of PR body
-            SUMMARY="${SUMMARY}\n\n$(echo "$PR_BODY" | head -c 500)"
-          fi
-          SUMMARY="${SUMMARY}\n\nFiles: $(echo "$FILES_CHANGED" | wc -l | tr -d ' ') changed"
-          
-          echo "summary<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$SUMMARY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          FILES_CHANGED=$(git diff --name-only "$BASE_SHA".."$HEAD_SHA" | head -30)
+          N_FILES=$(printf '%s\n' "$FILES_CHANGED" | grep -c . || true)
+
+          {
+            printf 'summary<<VELIXAR_EOF\n'
+            printf 'PR #%s: %s\n' "$PR_NUMBER" "$PR_TITLE"
+            if [ -n "${PR_BODY:-}" ]; then
+              printf '\n%s\n' "$(printf '%s' "$PR_BODY" | head -c 500)"
+            fi
+            printf '\nFiles: %s changed\n' "$N_FILES"
+            printf 'VELIXAR_EOF\n'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Store summarized memory
-        if: env.VELIXAR_API_KEY != ''
+        # `env.VELIXAR_API_KEY` here read the JOB env, not this step's own `env:`
+        # block — so it was always empty and this step has NEVER run. Test the secret.
+        if: ${{ secrets.VELIXAR_API_KEY != '' }}
         env:
           VELIXAR_API_KEY: ${{ secrets.VELIXAR_API_KEY }}
           VELIXAR_API_URL: ${{ secrets.VELIXAR_API_URL }}
