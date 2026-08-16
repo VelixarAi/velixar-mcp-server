@@ -1,7 +1,7 @@
 {
   "name": "velixar-mcp-server",
-  "version": "1.6.5",
-  "description": "MCP server for Velixar persistent cognitive context — memory, identity, graph, time, and contradiction for LLMs",
+  "version": "1.6.6",
+  "description": "MCP server for Velixar persistent cognitive context \u2014 memory, identity, graph, time, and contradiction for LLMs",
   "type": "module",
   "bin": {
     "velixar-mcp-server": "./dist/server.js"
