@@ -90,8 +90,14 @@ export interface ValidatedIdentityResult {
 export interface ValidatedOverviewResult {
   total_memories?: number;
   cortex_nodes?: number;
+  /** Memories carrying a previous_memory_id. `undefined` = the backend did not measure it;
+   *  that is NOT the same as 0, and callers must not coalesce the two. */
+  chain_edges?: number;
+  /** @deprecated alias of chain_edges, retained while pinned clients still read it. */
   temporal_chains?: number;
   system_mode?: string;
+  /** Keys this response did not measure. Render them as unknown, never as a value. */
+  metrics_not_measured?: string[];
 }
 
 // ── Validators ──
@@ -227,8 +233,12 @@ export function validateOverviewResponse(raw: unknown, endpoint: string): Valida
   return {
     total_memories: num(o.total_memories),
     cortex_nodes: num(o.cortex_nodes),
+    chain_edges: num(o.chain_edges),
     temporal_chains: num(o.temporal_chains),
     system_mode: str(o.system_mode),
+    metrics_not_measured: Array.isArray(o.metrics_not_measured)
+      ? (o.metrics_not_measured as unknown[]).filter((x): x is string => typeof x === 'string')
+      : undefined,
   };
 }
 
