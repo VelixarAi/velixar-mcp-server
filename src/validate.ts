@@ -66,6 +66,20 @@ export interface ValidatedRawMemory {
 
 export interface ValidatedStoreResult {
   id: string;
+  /**
+   * Declared-lineage accounting from the backend (v74+). ALL OPTIONAL, and their absence
+   * means UNKNOWN — an older backend, or the dedup early-return path which omits them —
+   * never "nothing was dropped". Rendering absence as a clean write is the exact defect
+   * this carries.
+   *
+   * `referencesStored` is the backend's count of edges actually STAMPED. It must never be
+   * recomputed from `source_ids.length`: deriving success from the attempt is the defect one
+   * layer up.
+   */
+  referencesDeclared?: number;
+  referencesStored?: number;
+  referencesDropped?: string[];
+  referencesTruncated?: number;
 }
 
 export interface ValidatedSearchResult {
@@ -145,7 +159,19 @@ export function validateStoreResponse(raw: unknown, endpoint: string): Validated
   if (o.error) throw new Error(String(o.error));
   const id = str(o.id);
   if (!id) throw new SchemaError(endpoint, 'id', 'string', o.id);
-  return { id };
+  // W3: this used to `return { id }` and drop everything else on the floor. The backend
+  // (v74+) reports exactly which declared references it discarded and how many it truncated;
+  // that accounting died here, one line before the caller could see it. Both production
+  // instances of the defect it describes were MCP writes, so this strip point is the reason
+  // the honest backend signal never reached anyone.
+  const dropped = arr(o.references_dropped)?.map(String).filter(Boolean);
+  return {
+    id,
+    referencesDeclared: num(o.references_declared),
+    referencesStored: num(o.references_stored),
+    referencesDropped: dropped && dropped.length ? dropped : undefined,
+    referencesTruncated: num(o.references_truncated),
+  };
 }
 
 export function validateSearchResponse(raw: unknown, endpoint: string): ValidatedSearchResult {

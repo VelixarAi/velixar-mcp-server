@@ -187,6 +187,45 @@ export async function handleMemoryTool(
     const result = validateStoreResponse(raw, '/memory');
     const responseData: Record<string, unknown> = { id: result.id, action: 'stored' };
     if (similar_existing) responseData.similar_existing = similar_existing;
+
+    // W3 — SURFACE THE DECLARED-LINEAGE ACCOUNTING.
+    //
+    // This object used to be built from scratch as { id, action } no matter what the backend
+    // said, so a store that lost half its lineage was indistinguishable from a clean one.
+    // The two production instances of that loss (997cc582: 4 declared/3 stored, and
+    // 1b24f1bb: 3/2 — the record written to CORRECT the first) were both MCP writes. The
+    // backend had the numbers; this line threw them away.
+    //
+    // Reported only when the caller declared lineage, so an ordinary store keeps its exact
+    // previous shape. Counts come from the BACKEND — never recomputed from
+    // source_ids.length, which would assert success from the attempt and reproduce the
+    // defect one layer up.
+    if (result.referencesDeclared !== undefined) {
+      const refs: Record<string, unknown> = {
+        declared: result.referencesDeclared,
+        stored: result.referencesStored,
+      };
+      if (result.referencesDropped) refs.dropped = result.referencesDropped;
+      if (result.referencesTruncated) refs.truncated = result.referencesTruncated;
+      responseData.references = refs;
+
+      // A field an agent can skim past is not a signal. When edges were actually lost, say
+      // so in prose, because the whole failure mode is "the author did not notice".
+      const lost: string[] = [];
+      if (result.referencesDropped?.length) {
+        lost.push(`${result.referencesDropped.length} unresolvable (${result.referencesDropped.join(', ')})`);
+      }
+      if (result.referencesTruncated) {
+        lost.push(`${result.referencesTruncated} beyond the server cap`);
+      }
+      if (lost.length) {
+        responseData.warning =
+          `LINEAGE INCOMPLETE — ${result.referencesStored} of ${result.referencesDeclared} declared ` +
+          `references were stored; ${lost.join('; ')}. The memory is written. Its derivation ` +
+          `graph is not what you declared: re-declare the missing edges on a NEW memory ` +
+          `(never edit in place). An id you did not look up is the usual cause.`;
+      }
+    }
     return { text: JSON.stringify(wrapResponse(responseData, config)) };
   }
 
