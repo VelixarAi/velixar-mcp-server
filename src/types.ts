@@ -115,6 +115,26 @@ export interface MemoryItem {
     status: string | null;
     reason: string | null;
   };
+  /**
+   * Set ONLY when `content` above is not the whole memory. Absent means complete.
+   *
+   * A listing returns one row per memory by keeping the HEAD CHUNK and does not
+   * reassemble; `velixar_inspect` / GET by id does. So the same memory reads differently
+   * through the two tools, and until 2026-09-07 nothing on this surface said so — the row
+   * simply stopped, mid-record, well-formed. Measured on the review-template records:
+   * a listing returned 1,096 chars of a 2,900-char record with no ellipsis and no flag.
+   */
+  content_partial?: ContentPartial;
+}
+
+/** Why `content` is short, and what to call to get the rest. */
+export interface ContentPartial {
+  /** `chunking` = head chunk only. `content_max` = a clip the caller asked for. */
+  reason: Array<'chunking' | 'content_max'>;
+  chunks_returned: number;
+  total_chunks?: number;
+  /** Deliberately actionable: the next call, not a description of the problem. */
+  full_content_via: string;
 }
 
 // ── Graph ──

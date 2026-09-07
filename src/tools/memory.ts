@@ -300,10 +300,25 @@ export async function handleMemoryTool(
     // class as a false-green health check. The backend now says which it is via
     // absence_reason; honour that, and fall back to the cursor when talking to an older one.
     const _emptyButMore = items.length === 0 && !!result.cursor;
+    // A LISTING IS NOT A READING SURFACE, AND IT MUST SAY SO.
+    // Each row's `content` here is the HEAD CHUNK of its memory, never reassembled —
+    // `velixar_inspect` reassembles, this does not. Per-row `content_partial` marks the
+    // affected rows; this line is the part a reader cannot skim past, because the count
+    // sits beside `count` in the envelope rather than inside the Nth object of an array.
+    // Measured 2026-09-05: quoting a directive from this surface silently dropped two of
+    // its clauses, and nothing in the response could have revealed that.
+    const _partial = items.filter(m => m.content_partial).length;
     return {
       text: JSON.stringify(wrapResponse(
         {
           items, count: items.length, cursor: result.cursor,
+          content_partial_items: _partial,
+          ...(_partial > 0 ? {
+            content_partial_notice:
+              `${_partial} of ${items.length} rows carry the HEAD CHUNK ONLY, not the full memory. ` +
+              'Do NOT quote or summarise those rows from this response — call velixar_inspect(memory_id) ' +
+              'for the complete text. Each affected row names its own call in content_partial.full_content_via.',
+          } : {}),
           ...(_emptyButMore ? { more_to_scan: true } : {}),
         },
         config,

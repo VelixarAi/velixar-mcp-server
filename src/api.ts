@@ -4,7 +4,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ApiConfig, ApiTiming, Author, MemoryItem, MemoryOrigin, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
+import type { ApiConfig, ApiTiming, Author, ContentPartial, MemoryItem, MemoryOrigin, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
 import type { ValidatedRawMemory } from './validate.js';
 import { VERSION } from './version.js';
 import { noteFromHeader, takeUpdateNotice } from './update_notice.js';
@@ -530,6 +530,13 @@ export interface RawMemory {
   superseded_by?: string | null;
   supersession_status?: string | null;
   superseded_reason?: string | null;
+  /** How the memory is STORED. NOT an answer about the string in `content`. */
+  is_chunked?: boolean;
+  total_chunks?: number | null;
+  /** Backend >= 2026-09-07 states this outright; older ones do not, so we derive. */
+  content_truncated?: boolean;
+  content_truncated_by?: Array<'chunking' | 'content_max'>;
+  content_chunks_returned?: number | null;
 }
 
 /** Coerce a raw `/memory/{id}` payload into RawMemory — THE ONE PLACE THIS LIST LIVES.
@@ -616,6 +623,7 @@ function inferSourceType(raw: RawMemory | ValidatedRawMemory): SourceType {
 }
 
 export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem {
+  const partial = contentPartialOf(raw);
   return {
     id: raw.id,
     workspace_id: '', // filled by caller
@@ -663,6 +671,38 @@ export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem
         reason: raw.superseded_reason ?? null,
       },
     } : {}),
+    ...(partial ? { content_partial: partial } : {}),
+  };
+}
+
+/**
+ * Is the `content` on this row the whole memory?
+ *
+ * DERIVED, NOT JUST FORWARDED — deliberately. The backend gained an explicit
+ * `content_truncated` on 2026-09-07, but this client talks to whatever is deployed, and
+ * a signal that only works after a backend rollout leaves the surface silent in exactly
+ * the window where somebody is already reading truncated records and quoting them. Every
+ * backend that ever shipped chunking reports `total_chunks`, so the verdict is
+ * computable today: trust the explicit field when it is there, fall back to the
+ * arithmetic when it is not.
+ *
+ * Returns undefined for a complete row — the field is absent rather than `false`, so a
+ * present key always means "there is more", which is the reading that fails safe.
+ */
+export function contentPartialOf(raw: RawMemory | ValidatedRawMemory): ContentPartial | undefined {
+  const r = raw as RawMemory;
+  const total = typeof r.total_chunks === 'number' ? r.total_chunks : 0;
+  const chunked = total > 1;
+  const declared = r.content_truncated === true;
+  if (!chunked && !declared) return undefined;
+  const reason = r.content_truncated_by?.length
+    ? r.content_truncated_by
+    : (chunked ? ['chunking' as const] : ['content_max' as const]);
+  return {
+    reason,
+    chunks_returned: typeof r.content_chunks_returned === 'number' ? r.content_chunks_returned : 1,
+    ...(total > 1 ? { total_chunks: total } : {}),
+    full_content_via: `velixar_inspect(memory_id: "${raw.id}")`,
   };
 }
 
