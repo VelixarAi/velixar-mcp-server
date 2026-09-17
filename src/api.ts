@@ -723,6 +723,51 @@ function reconcileConfidenceSignals(data: unknown, meta: ResponseMeta): void {
     : 'envelope reports sufficient_answer=false; the payload may not present as more certain than that';
 }
 
+/**
+ * A declared derivation edge must name a memory by its FULL id. Three seats in one day
+ * fabricated a UUID from an 8-hex index pointer; the backend dropped each edge and this client
+ * reported the write as complete. Shape is the client's check; existence is the backend's.
+ */
+export const MEMORY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function assertMemoryIds(ids: unknown, field = 'source_ids'): string[] {
+  if (!Array.isArray(ids)) return [];
+  const bad = (ids as unknown[]).filter(x => typeof x !== 'string' || !MEMORY_ID_RE.test(x));
+  if (bad.length) {
+    throw new Error(
+      `${field} must be full memory UUIDs (8-4-4-4-12); rejected ${JSON.stringify(bad)}. ` +
+      'An 8-hex index pointer is not an id — velixar_search for the record and use its full id, or omit the edge.');
+  }
+  return ids as string[];
+}
+
+/**
+ * The backend (W1/W2) reports references_declared/stored/dropped/truncated on every store.
+ * Surface it, and say in words when a declared edge did not survive — a dropped edge that
+ * reads as a complete write is a provenance claim the author never made.
+ */
+export function referenceAccounting(raw: unknown, declaredIds: string[]): { accounting?: Record<string, unknown>; warnings: string[]; stored_ids: string[] } {
+  const o = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+  const warnings: string[] = [];
+  if (!declaredIds.length) return { warnings, stored_ids: [] };
+  const declared = typeof o.references_declared === 'number' ? o.references_declared : undefined;
+  if (declared === undefined) {
+    warnings.push(`declared ${declaredIds.length} source_ids but the backend returned no reference accounting — treat the derivation edges as UNVERIFIED`);
+    return { warnings, stored_ids: [] };
+  }
+  const dropped = Array.isArray(o.references_dropped) ? (o.references_dropped as string[]) : [];
+  const truncated = typeof o.references_truncated === 'number' ? o.references_truncated : 0;
+  const stored = typeof o.references_stored === 'number' ? o.references_stored : declaredIds.length - dropped.length;
+  const accounting: Record<string, unknown> = { declared, stored };
+  if (dropped.length) {
+    accounting.dropped = dropped;
+    warnings.push(`${dropped.length} of ${declared} declared source_ids were NOT stored (unknown in this workspace): ${dropped.join(', ')} — those derivation edges do not exist`);
+  }
+  if (truncated > 0) { accounting.truncated = truncated; warnings.push(`${truncated} declared source_ids beyond the server limit were dropped`); }
+  const droppedSet = new Set(dropped);
+  return { accounting, warnings, stored_ids: declaredIds.filter(id => !droppedSet.has(id)) };
+}
+
 export function wrapResponse<T>(data: T, config: ApiConfig, overrides: Partial<ResponseMeta> = {}): VelixarResponse<T> {
   const meta = makeMeta(config, overrides);
   reconcileConfidenceSignals(data, meta);

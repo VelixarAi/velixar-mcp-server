@@ -259,14 +259,33 @@ export async function handleGraphTool(
       const raw = await api.get<unknown>('/graph/stats', true);
       const rObj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
 
-      return {
-        text: JSON.stringify(wrapResponse({
-          entity_count: typeof rObj.entity_count === 'number' ? rObj.entity_count : 0,
-          relationship_count: typeof rObj.relationship_count === 'number' ? rObj.relationship_count : 0,
-          top_entity_types: Array.isArray(rObj.top_entity_types) ? rObj.top_entity_types : [],
-          density: typeof rObj.density === 'number' ? rObj.density : undefined,
-        }, config)),
+      // `relationship_count` is a WARM-CACHE LOWER BOUND, not a graph total — a cold
+      // process reports 0. The backend states that in `relationship_count_note` and
+      // ships the real persistent total in `edges_in_store`, specifically so the number
+      // cannot be misread. This projection used to drop both, handing the caller a bare
+      // count with an authoritative name. On 2026-08-26 that produced "4,309 entities,
+      // 155 relationships — arithmetically inconsistent with the write path", which was
+      // escalated as a commercial finding before the note was found in the API response.
+      // A caveat that does not travel with its number is not a caveat.
+      //
+      // Pass them through when present; never synthesise them when absent — an older
+      // backend that omits the note must read as "no note", not as a note we invented.
+      const out: Record<string, unknown> = {
+        entity_count: typeof rObj.entity_count === 'number' ? rObj.entity_count : 0,
+        relationship_count: typeof rObj.relationship_count === 'number' ? rObj.relationship_count : 0,
+        top_entity_types: Array.isArray(rObj.top_entity_types) ? rObj.top_entity_types : [],
+        density: typeof rObj.density === 'number' ? rObj.density : undefined,
       };
+      if (typeof rObj.relationship_count_note === 'string') {
+        out.relationship_count_note = rObj.relationship_count_note;
+      }
+      if (typeof rObj.edges_in_store === 'number') {
+        out.edges_in_store = rObj.edges_in_store;
+      }
+      if (typeof rObj.entity_count_note === 'string') {
+        out.entity_count_note = rObj.entity_count_note;
+      }
+      return { text: JSON.stringify(wrapResponse(out, config)) };
     } catch {
       // Fallback: derive stats from a broad traverse
       try {
@@ -282,12 +301,20 @@ export async function handleGraphTool(
           .slice(0, 10)
           .map(([type, count]) => ({ type, count }));
 
+        // THIRD distinct quantity, and the most misleading of the three: these are the
+        // nodes and edges reachable by a single 1-hop traverse from '*', not the graph
+        // and not the warm cache. `_fallback: true` says the path differed; it does not
+        // say the MEANING differed. This note is asserted by the client about its own
+        // computation — it is not a backend note and must never be confused for one.
         return {
           text: JSON.stringify(wrapResponse({
             entity_count: result.nodes.length,
             relationship_count: result.edges.length,
             top_entity_types: topTypes,
             _fallback: true,
+            _fallback_note: 'DERIVED CLIENT-SIDE from a single 1-hop /graph/traverse — '
+              + 'these are reachable nodes/edges, NOT graph totals and NOT the warm-cache '
+              + 'figure /graph/stats reports. Not comparable to either.',
           }, config)),
         };
       } catch {
