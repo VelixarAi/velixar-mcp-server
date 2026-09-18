@@ -29,10 +29,10 @@ import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
 import { liveDataTools, handleLiveDataTool } from './tools/livedata.js';
 import { retrievalTools, handleRetrievalTool } from './tools/retrieval.js';
 import { constructionTools, handleConstructionTool } from './tools/construction.js';
-// Proprietary enterprise modules are deliberately NOT imported here. A runtime
-// feature flag gates registration but not compilation, so an import alone is
-// enough to place closed source into the published dist/ artifact.
-// Open-core boundary: see REPO_OPEN_CORE_POLICY.md.
+// Open-core boundary. Proprietary modules (tools/clairvoyance.ts, simulation/*) are
+// neither imported here nor compiled: tsc emits every file tsconfig `include` matches,
+// whether or not anything imports it, so the boundary is held by tsconfig `exclude`
+// and proven by tests/open-core-boundary.test.js against the built dist/.
 import { fetchRecall, getResourceList, readResource, getResourceUris, refreshIdentity, refreshRelevantMemories, markToolCall, isRelevantStale, getConstitutionFallback } from './resources.js';
 import { getPromptList, getPrompt, allPrompts } from './prompts.js';
 
