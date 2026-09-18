@@ -4,7 +4,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ApiConfig, ApiTiming, Author, MemoryItem, MemoryOrigin, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
+import type { ApiConfig, ApiTiming, Author, ContentPartial, MemoryItem, MemoryOrigin, MemoryType, ResponseMeta, SourceType, VelixarError, VelixarResponse } from './types.js';
 import type { ValidatedRawMemory } from './validate.js';
 import { VERSION } from './version.js';
 import { noteFromHeader, takeUpdateNotice } from './update_notice.js';
@@ -524,6 +524,19 @@ export interface RawMemory {
   source_class?: string;
   /** Only if a projection ever emits it. No REST projection does today. */
   last_touched?: string;
+  /** Supersession banner (server v60+): this row has been declared replaced. Null on
+   *  unstamped rows. Dropping these is how "backend honest, client lossy" happens —
+   *  a reader shown superseded text bare acts on dead state. */
+  superseded_by?: string | null;
+  supersession_status?: string | null;
+  superseded_reason?: string | null;
+  /** How the memory is STORED. NOT an answer about the string in `content`. */
+  is_chunked?: boolean;
+  total_chunks?: number | null;
+  /** Backend >= 2026-09-07 states this outright; older ones do not, so we derive. */
+  content_truncated?: boolean;
+  content_truncated_by?: Array<'chunking' | 'content_max'>;
+  content_chunks_returned?: number | null;
 }
 
 /** Coerce a raw `/memory/{id}` payload into RawMemory — THE ONE PLACE THIS LIST LIVES.
@@ -556,6 +569,9 @@ export function toRawMemory(o: Record<string, unknown>): RawMemory {
     is_origin: typeof o.is_origin === 'boolean' ? o.is_origin : undefined,
     origin: (o.origin && typeof o.origin === 'object') ? o.origin as MemoryOrigin : undefined,
     last_touched: str(o.last_touched),
+    superseded_by: str(o.superseded_by),
+    supersession_status: str(o.supersession_status),
+    superseded_reason: str(o.superseded_reason),
   };
 }
 
@@ -607,6 +623,7 @@ function inferSourceType(raw: RawMemory | ValidatedRawMemory): SourceType {
 }
 
 export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem {
+  const partial = contentPartialOf(raw);
   return {
     id: raw.id,
     workspace_id: '', // filled by caller
@@ -643,6 +660,49 @@ export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem
       is_origin: raw.is_origin ?? (raw.references !== undefined ? raw.references.length === 0 : undefined),
     },
     origin: raw.origin,
+    // The supersession banner. Emitted ONLY when the backend declared one — an absent
+    // field means "not superseded", never a default. This is the consumer half whose
+    // absence let every retrieval surface show retired text bare (the reason the
+    // READ-side exclusion flag was gated on this client change).
+    ...(raw.superseded_by ? {
+      superseded: {
+        by: raw.superseded_by,
+        status: raw.supersession_status ?? null,
+        reason: raw.superseded_reason ?? null,
+      },
+    } : {}),
+    ...(partial ? { content_partial: partial } : {}),
+  };
+}
+
+/**
+ * Is the `content` on this row the whole memory?
+ *
+ * DERIVED, NOT JUST FORWARDED — deliberately. The backend gained an explicit
+ * `content_truncated` on 2026-09-07, but this client talks to whatever is deployed, and
+ * a signal that only works after a backend rollout leaves the surface silent in exactly
+ * the window where somebody is already reading truncated records and quoting them. Every
+ * backend that ever shipped chunking reports `total_chunks`, so the verdict is
+ * computable today: trust the explicit field when it is there, fall back to the
+ * arithmetic when it is not.
+ *
+ * Returns undefined for a complete row — the field is absent rather than `false`, so a
+ * present key always means "there is more", which is the reading that fails safe.
+ */
+export function contentPartialOf(raw: RawMemory | ValidatedRawMemory): ContentPartial | undefined {
+  const r = raw as RawMemory;
+  const total = typeof r.total_chunks === 'number' ? r.total_chunks : 0;
+  const chunked = total > 1;
+  const declared = r.content_truncated === true;
+  if (!chunked && !declared) return undefined;
+  const reason = r.content_truncated_by?.length
+    ? r.content_truncated_by
+    : (chunked ? ['chunking' as const] : ['content_max' as const]);
+  return {
+    reason,
+    chunks_returned: typeof r.content_chunks_returned === 'number' ? r.content_chunks_returned : 1,
+    ...(total > 1 ? { total_chunks: total } : {}),
+    full_content_via: `velixar_inspect(memory_id: "${raw.id}")`,
   };
 }
 
@@ -739,33 +799,6 @@ export function assertMemoryIds(ids: unknown, field = 'source_ids'): string[] {
       'An 8-hex index pointer is not an id — velixar_search for the record and use its full id, or omit the edge.');
   }
   return ids as string[];
-}
-
-/**
- * The backend (W1/W2) reports references_declared/stored/dropped/truncated on every store.
- * Surface it, and say in words when a declared edge did not survive — a dropped edge that
- * reads as a complete write is a provenance claim the author never made.
- */
-export function referenceAccounting(raw: unknown, declaredIds: string[]): { accounting?: Record<string, unknown>; warnings: string[]; stored_ids: string[] } {
-  const o = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
-  const warnings: string[] = [];
-  if (!declaredIds.length) return { warnings, stored_ids: [] };
-  const declared = typeof o.references_declared === 'number' ? o.references_declared : undefined;
-  if (declared === undefined) {
-    warnings.push(`declared ${declaredIds.length} source_ids but the backend returned no reference accounting — treat the derivation edges as UNVERIFIED`);
-    return { warnings, stored_ids: [] };
-  }
-  const dropped = Array.isArray(o.references_dropped) ? (o.references_dropped as string[]) : [];
-  const truncated = typeof o.references_truncated === 'number' ? o.references_truncated : 0;
-  const stored = typeof o.references_stored === 'number' ? o.references_stored : declaredIds.length - dropped.length;
-  const accounting: Record<string, unknown> = { declared, stored };
-  if (dropped.length) {
-    accounting.dropped = dropped;
-    warnings.push(`${dropped.length} of ${declared} declared source_ids were NOT stored (unknown in this workspace): ${dropped.join(', ')} — those derivation edges do not exist`);
-  }
-  if (truncated > 0) { accounting.truncated = truncated; warnings.push(`${truncated} declared source_ids beyond the server limit were dropped`); }
-  const droppedSet = new Set(dropped);
-  return { accounting, warnings, stored_ids: declaredIds.filter(id => !droppedSet.has(id)) };
 }
 
 export function wrapResponse<T>(data: T, config: ApiConfig, overrides: Partial<ResponseMeta> = {}): VelixarResponse<T> {

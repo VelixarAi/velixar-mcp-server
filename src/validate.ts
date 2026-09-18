@@ -57,10 +57,29 @@ export interface ValidatedRawMemory {
    *  and invented one instead. */
   source_class?: string;
   origin?: import('./types.js').MemoryOrigin;
+  /** Supersession banner (server v60+). Dropping these here is the exact validator-
+   *  whitelist failure that previously ate source_class/references/origin. */
+  superseded_by?: string | null;
+  supersession_status?: string | null;
+  superseded_reason?: string | null;
 }
 
 export interface ValidatedStoreResult {
   id: string;
+  /**
+   * Declared-lineage accounting from the backend (v74+). ALL OPTIONAL, and their absence
+   * means UNKNOWN — an older backend, or the dedup early-return path which omits them —
+   * never "nothing was dropped". Rendering absence as a clean write is the exact defect
+   * this carries.
+   *
+   * `referencesStored` is the backend's count of edges actually STAMPED. It must never be
+   * recomputed from `source_ids.length`: deriving success from the attempt is the defect one
+   * layer up.
+   */
+  referencesDeclared?: number;
+  referencesStored?: number;
+  referencesDropped?: string[];
+  referencesTruncated?: number;
 }
 
 export interface ValidatedSearchResult {
@@ -126,6 +145,9 @@ function validateRawMemory(m: unknown, endpoint: string): ValidatedRawMemory | n
     is_origin: typeof o.is_origin === 'boolean' ? o.is_origin : undefined,
     source_class: str(o.source_class),
     origin: validateOrigin(o.origin),
+    superseded_by: str(o.superseded_by),
+    supersession_status: str(o.supersession_status),
+    superseded_reason: str(o.superseded_reason),
   };
 }
 
@@ -143,7 +165,19 @@ export function validateStoreResponse(raw: unknown, endpoint: string): Validated
   if (o.error) throw new Error(String(o.error));
   const id = str(o.id);
   if (!id) throw new SchemaError(endpoint, 'id', 'string', o.id);
-  return { id };
+  // W3: this used to `return { id }` and drop everything else on the floor. The backend
+  // (v74+) reports exactly which declared references it discarded and how many it truncated;
+  // that accounting died here, one line before the caller could see it. Both production
+  // instances of the defect it describes were MCP writes, so this strip point is the reason
+  // the honest backend signal never reached anyone.
+  const dropped = arr(o.references_dropped)?.map(String).filter(Boolean);
+  return {
+    id,
+    referencesDeclared: num(o.references_declared),
+    referencesStored: num(o.references_stored),
+    referencesDropped: dropped && dropped.length ? dropped : undefined,
+    referencesTruncated: num(o.references_truncated),
+  };
 }
 
 export function validateSearchResponse(raw: unknown, endpoint: string): ValidatedSearchResult {

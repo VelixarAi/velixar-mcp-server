@@ -5,7 +5,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
-import { assertMemoryIds, getClientSlug, normalizeMemory, referenceAccounting, userParams, withUser, wrapResponse } from '../api.js';
+import { assertMemoryIds, getClientSlug, normalizeMemory, userParams, withUser, wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
 import { validateStoreResponse, validateSearchResponse, validateListResponse, validateMutationResponse } from '../validate.js';
 
@@ -189,9 +189,45 @@ export async function handleMemoryTool(
     const result = validateStoreResponse(raw, '/memory');
     const responseData: Record<string, unknown> = { id: result.id, action: 'stored' };
     if (similar_existing) responseData.similar_existing = similar_existing;
-    const refs = referenceAccounting(rawObj, declaredIds);
-    if (refs.accounting) responseData.references = refs.accounting;
-    if (refs.warnings.length) responseData.warnings = refs.warnings;
+
+    // W3 — SURFACE THE DECLARED-LINEAGE ACCOUNTING.
+    //
+    // This object used to be built from scratch as { id, action } no matter what the backend
+    // said, so a store that lost half its lineage was indistinguishable from a clean one.
+    // The two production instances of that loss (997cc582: 4 declared/3 stored, and
+    // 1b24f1bb: 3/2 — the record written to CORRECT the first) were both MCP writes. The
+    // backend had the numbers; this line threw them away.
+    //
+    // Reported only when the caller declared lineage, so an ordinary store keeps its exact
+    // previous shape. Counts come from the BACKEND — never recomputed from
+    // source_ids.length, which would assert success from the attempt and reproduce the
+    // defect one layer up.
+    if (result.referencesDeclared !== undefined) {
+      const refs: Record<string, unknown> = {
+        declared: result.referencesDeclared,
+        stored: result.referencesStored,
+      };
+      if (result.referencesDropped) refs.dropped = result.referencesDropped;
+      if (result.referencesTruncated) refs.truncated = result.referencesTruncated;
+      responseData.references = refs;
+
+      // A field an agent can skim past is not a signal. When edges were actually lost, say
+      // so in prose, because the whole failure mode is "the author did not notice".
+      const lost: string[] = [];
+      if (result.referencesDropped?.length) {
+        lost.push(`${result.referencesDropped.length} unresolvable (${result.referencesDropped.join(', ')})`);
+      }
+      if (result.referencesTruncated) {
+        lost.push(`${result.referencesTruncated} beyond the server cap`);
+      }
+      if (lost.length) {
+        responseData.warning =
+          `LINEAGE INCOMPLETE — ${result.referencesStored} of ${result.referencesDeclared} declared ` +
+          `references were stored; ${lost.join('; ')}. The memory is written. Its derivation ` +
+          `graph is not what you declared: re-declare the missing edges on a NEW memory ` +
+          `(never edit in place). An id you did not look up is the usual cause.`;
+      }
+    }
     return { text: JSON.stringify(wrapResponse(responseData, config)) };
   }
 
@@ -266,10 +302,25 @@ export async function handleMemoryTool(
     // class as a false-green health check. The backend now says which it is via
     // absence_reason; honour that, and fall back to the cursor when talking to an older one.
     const _emptyButMore = items.length === 0 && !!result.cursor;
+    // A LISTING IS NOT A READING SURFACE, AND IT MUST SAY SO.
+    // Each row's `content` here is the HEAD CHUNK of its memory, never reassembled —
+    // `velixar_inspect` reassembles, this does not. Per-row `content_partial` marks the
+    // affected rows; this line is the part a reader cannot skim past, because the count
+    // sits beside `count` in the envelope rather than inside the Nth object of an array.
+    // Measured 2026-09-05: quoting a directive from this surface silently dropped two of
+    // its clauses, and nothing in the response could have revealed that.
+    const _partial = items.filter(m => m.content_partial).length;
     return {
       text: JSON.stringify(wrapResponse(
         {
           items, count: items.length, cursor: result.cursor,
+          content_partial_items: _partial,
+          ...(_partial > 0 ? {
+            content_partial_notice:
+              `${_partial} of ${items.length} rows carry the HEAD CHUNK ONLY, not the full memory. ` +
+              'Do NOT quote or summarise those rows from this response — call velixar_inspect(memory_id) ' +
+              'for the complete text. Each affected row names its own call in content_partial.full_content_via.',
+          } : {}),
           ...(_emptyButMore ? { more_to_scan: true } : {}),
         },
         config,
