@@ -60,7 +60,23 @@ jobs:
         # version is the bug this whole release exists to fix — so check, always.
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          sleep 20
-          PUBLISHED=$(npm view "velixar-mcp-server@$VERSION" version)
-          echo "package.json=$VERSION  registry=$PUBLISHED"
+          # npm answers a publish with 202 Accepted and processes it ASYNCHRONOUSLY, so the
+          # version is not queryable the moment `npm publish` returns. A fixed `sleep 20`
+          # made 1.6.9 report FAILURE on a publish that had fully succeeded (it appeared
+          # ~20s later), and a red run on a good release teaches everyone to ignore this step.
+          for i in $(seq 1 30); do
+            PUBLISHED=$(npm view "velixar-mcp-server@$VERSION" version 2>/dev/null)
+            [ "$PUBLISHED" = "$VERSION" ] && break
+            sleep 10
+          done
+          echo "package.json=$VERSION  registry=${PUBLISHED:-<absent>}  after ~$((i*10))s"
           test "$VERSION" = "$PUBLISHED"
+          # The ARTIFACT is the claim, not the version number. 1.6.8 shipped
+          # dist/tools/clairvoyance.js and dist/simulation/* inside an open package (16
+          # files). The tsconfig exclude that fixed it lives in the repo and could be undone
+          # without any existing test noticing, because every check we have reads the repo
+          # or the local build. So inspect what the registry actually served.
+          npm pack "velixar-mcp-server@$VERSION" --silent >/dev/null
+          LEAKED=$(tar -tzf "velixar-mcp-server-$VERSION.tgz" | grep -icE 'clairvoyance|simulation' || true)
+          echo "proprietary files in the published tarball: $LEAKED"
+          test "$LEAKED" -eq 0
