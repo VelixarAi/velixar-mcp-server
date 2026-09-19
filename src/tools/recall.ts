@@ -153,10 +153,20 @@ export async function handleRecallTool(
       };
     });
 
+    // Render a count, or say plainly that it was not measured. Never substitute a number for
+    // an absent one: "0" and "unreported" are different facts and a reader cannot recover the
+    // difference once they are merged (FIR-2026-08-18).
+    const fmtCount = (n: number | null | undefined): string =>
+      typeof n === 'number' ? String(n) : 'an unmeasured number of';
+
     // Build brief
     const brief = {
+      // `??` not `||`, and an explicit unknown branch. `0` is a MEANINGFUL value for every
+      // count here, so `|| 0` destroyed the one distinction a reader needs: "the backend did
+      // not report this" rendered identically to "there are none". Paired with a backend that
+      // hardcoded `temporal_chains: 0`, the pair was unfalsifiable — see FIR-2026-08-18.
       summary: overview
-        ? `Workspace has ${overview.total_memories || 0} memories, ${overview.cortex_nodes || 0} entities, ${overview.temporal_chains || 0} chains. Mode: ${overview.system_mode || 'unknown'}.`
+        ? `Workspace has ${fmtCount(overview.total_memories)} memories, ${fmtCount(overview.cortex_nodes)} entities, ${fmtCount(overview.chain_edges ?? overview.temporal_chains)} chain edges. Mode: ${overview.system_mode ?? 'not measured'}.`
         : `${relevantFacts.length} relevant facts found${topic ? ` for "${topic}"` : ''}.`,
       relevant_facts: relevantFacts,
       recent_activity: compact ? recentItems.slice(0, 3) : recentItems,
@@ -196,10 +206,20 @@ export async function handleRecallTool(
           reason: 'not_implemented',
           detail: 'no pattern extraction runs in this path yet; the empty array is a placeholder, not a finding. Do not read it as "no patterns exist".',
         },
-        ...((overview && (overview.temporal_chains || 0) === 0) ? [{
-          section: 'temporal_chains',
-          reason: 'none_exist',
-          detail: 'the workspace has 0 chains — supersession/previous_memory_id edges are not being written, so temporal ordering is unavailable rather than empty',
+        // A CONSUMER MAY NOT NARRATE A CAUSE IT CANNOT OBSERVE.
+        //
+        // This used to fire whenever the count was falsy and assert a mechanism: "supersession/
+        // previous_memory_id edges are not being written". The client cannot see the write path,
+        // and the claim was FALSE — previous_memory_id was populated on the very memories
+        // returned in the same response. Every session reading this brief was told temporal
+        // ordering was dead while it was live, and that claim propagated into stored reasoning.
+        //
+        // Now: report only what is observable — that the value was not measured — and say so
+        // ONLY when the backend actually says so. A real zero is a finding, not a gap.
+        ...((overview && (overview.chain_edges ?? overview.temporal_chains) == null) ? [{
+          section: 'chain_edges',
+          reason: 'not_measured',
+          detail: 'the backend did not report a chain-edge count for this workspace, so the number of temporal links is UNKNOWN — not zero. Treat it as a missing measurement and draw no conclusion about the write path from it.',
         }] : []),
       ],
       // Phase 4: Multi-angle search metadata

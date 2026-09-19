@@ -783,6 +783,24 @@ function reconcileConfidenceSignals(data: unknown, meta: ResponseMeta): void {
     : 'envelope reports sufficient_answer=false; the payload may not present as more certain than that';
 }
 
+/**
+ * A declared derivation edge must name a memory by its FULL id. Three seats in one day
+ * fabricated a UUID from an 8-hex index pointer; the backend dropped each edge and this client
+ * reported the write as complete. Shape is the client's check; existence is the backend's.
+ */
+export const MEMORY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function assertMemoryIds(ids: unknown, field = 'source_ids'): string[] {
+  if (!Array.isArray(ids)) return [];
+  const bad = (ids as unknown[]).filter(x => typeof x !== 'string' || !MEMORY_ID_RE.test(x));
+  if (bad.length) {
+    throw new Error(
+      `${field} must be full memory UUIDs (8-4-4-4-12); rejected ${JSON.stringify(bad)}. ` +
+      'An 8-hex index pointer is not an id — velixar_search for the record and use its full id, or omit the edge.');
+  }
+  return ids as string[];
+}
+
 export function wrapResponse<T>(data: T, config: ApiConfig, overrides: Partial<ResponseMeta> = {}): VelixarResponse<T> {
   const meta = makeMeta(config, overrides);
   reconcileConfidenceSignals(data, meta);

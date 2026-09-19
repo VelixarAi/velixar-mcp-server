@@ -7,7 +7,7 @@
     "velixar-mcp-server": "./dist/server.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "start": "node dist/server.js",
     "dev": "tsc --watch",
     "test": "npm run build && node --test tests/*.test.js",

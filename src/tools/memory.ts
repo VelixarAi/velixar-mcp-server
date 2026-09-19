@@ -5,7 +5,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ApiClient } from '../api.js';
-import { getClientSlug, normalizeMemory, userParams, withUser, wrapResponse } from '../api.js';
+import { assertMemoryIds, getClientSlug, normalizeMemory, userParams, withUser, wrapResponse } from '../api.js';
 import type { ApiConfig } from '../types.js';
 import { validateStoreResponse, validateSearchResponse, validateListResponse, validateMutationResponse } from '../validate.js';
 
@@ -172,9 +172,11 @@ export async function handleMemoryTool(
     // is the temporal session chain, a different lineage). The prior code collapsed
     // the whole derivation set into previous_memory_id[0], losing every id past the
     // first and conflating "built on" with "came after".
-    if (Array.isArray(args.source_ids) && args.source_ids.length) {
-      storeBody.references = (args.source_ids as string[]).filter(Boolean);
-    }
+    // Shape is the client's job; existence is the backend's. Three seats in one day passed
+    // an 8-hex index pointer as a source_id: the backend dropped the edge and this client
+    // reported a clean write. Reject what is not an id; report what was not stored.
+    const declaredIds = assertMemoryIds(args.source_ids).filter(Boolean);
+    if (declaredIds.length) storeBody.references = declaredIds;
 
     const raw = await api.post<unknown>('/memory', storeBody);
     const rawObj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
