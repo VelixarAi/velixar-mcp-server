@@ -23,6 +23,8 @@ import { memoryTools, handleMemoryTool } from './tools/memory.js';
 import { systemTools, handleSystemTool, recordAudit } from './tools/system.js';
 import { setCapabilitiesVerified } from './tools/system.js';
 import { recallTools, handleRecallTool } from './tools/recall.js';
+// VOU beta meter — READ-ONLY. See src/tools/vou.ts for why there is no write here.
+import { vouTools, handleVouTool } from './tools/vou.js';
 import { graphTools, handleGraphTool } from './tools/graph.js';
 import { cognitiveTools, handleCognitiveTool, trackToolCallForIdentity } from './tools/cognitive.js';
 import { lifecycleTools, handleLifecycleTool } from './tools/lifecycle.js';
@@ -103,7 +105,7 @@ const detectedHost = process.env.CURSOR_SESSION_ID ? 'cursor'
   : 'unknown';
 if (detectedHost !== 'unknown') log('info', 'host_detected', { host: detectedHost });
 
-const allTools = [...memoryTools, ...recallTools, ...graphTools, ...cognitiveTools, ...lifecycleTools, ...liveDataTools, ...retrievalTools, ...constructionTools, ...systemTools];
+const allTools = [...memoryTools, ...recallTools, ...graphTools, ...cognitiveTools, ...lifecycleTools, ...liveDataTools, ...retrievalTools, ...constructionTools, ...systemTools, ...vouTools];
 const allToolNames = allTools.map(t => t.name);
 
 // ── Build 7.2: Tool Tier System ──
@@ -139,6 +141,9 @@ const toolHandlers: Array<{ names: Set<string>; handler: typeof handleMemoryTool
   { names: new Set(liveDataTools.map(t => t.name)), handler: handleLiveDataTool },
   { names: new Set(retrievalTools.map(t => t.name).concat('velixar_batch_search')), handler: handleRetrievalTool },
   { names: new Set(constructionTools.map(t => t.name)), handler: handleConstructionTool },
+  // handleVouTool takes (name, args, api, config) and ignores the trailing params
+  // the shared signature passes; every VOU view is a GET against /v1/vou/*.
+  { names: new Set(vouTools.map(t => t.name)), handler: handleVouTool as typeof handleMemoryTool },
 ];
 const systemToolNames = new Set(systemTools.map(t => t.name));
 
