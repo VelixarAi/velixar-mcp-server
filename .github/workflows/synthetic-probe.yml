@@ -38,7 +38,7 @@ jobs:
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.gate.outputs.run == 'true'
         with:
           node-version: 20
