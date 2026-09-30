@@ -307,6 +307,18 @@ export async function handleConstructionTool(
       usedTokens += estimateTokens(finalContent);
     }
 
+    // HARD budget cap (2026-09-30): measured 8,132 tokens against an 8,000 budget on the live
+    // store. Trim from the end until the package fits, leaving room for the unknowns line.
+    const reserve = 60;
+    while (sections.length && usedTokens > budget - reserve) {
+      const last = sections[sections.length - 1];
+      const over = (usedTokens - (budget - reserve)) * 4;
+      if (last.content.length - over < 200) { usedTokens -= estimateTokens(last.content); sections.pop(); continue; }
+      const before = estimateTokens(last.content);
+      last.content = last.content.slice(0, last.content.length - over); last.truncated = true;
+      usedTokens += estimateTokens(last.content) - before;
+    }
+
     // Unknowns section (always included — anti-hallucination)
     const gapDescriptions = gaps.map(g => g.preview).filter(Boolean);
     const unknownsContent = gapDescriptions.length > 0

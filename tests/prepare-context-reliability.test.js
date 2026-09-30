@@ -65,7 +65,7 @@ test('R4 weak matches fall below the relevance floor; forced includes survive it
 test('R5 the package respects its token budget', async () => {
   const big = Array.from({ length: 8 }, (_, i) => mem(`b${i}`, `record ${i} `.repeat(600), 0.8));
   const o = body(await prepare({ byQuery: { a: big } }, { queries: ['a'], token_budget: 1500 }));
-  assert.ok(o.context_package.token_count <= 1500 * 1.05, `token_count ${o.context_package.token_count}`);
+  assert.ok(o.context_package.token_count <= 1500, `token_count ${o.context_package.token_count}`);
   assert.ok(o.context_package.sections[0].truncated);
 });
 test('R6 a coverage timeout is recorded in provenance', { timeout: 40_000 }, async () => {
