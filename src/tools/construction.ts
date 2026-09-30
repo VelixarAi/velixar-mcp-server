@@ -141,7 +141,9 @@ export async function handleConstructionTool(
     const explicitQueries = args.queries as string[] | undefined;
     let angles: string[];
     if (explicitQueries?.length) {
-      angles = [...new Set(explicitQueries.map(q => q.trim()).filter(Boolean))].slice(0, 5);
+      // The intent itself is always an angle (2026-09-30 A/B): a single meaning search on the full
+      // task description beat the keyword angles alone on recall and precision.
+      angles = [...new Set([intent.trim(), ...explicitQueries.map(q => q.trim())].filter(Boolean))].slice(0, 5);
     } else {
       const intentClean = intent.replace(/[?!.]+$/g, '').trim();
       const significant = intentClean.split(/\s+/).filter(w =>
@@ -307,16 +309,20 @@ export async function handleConstructionTool(
       usedTokens += estimateTokens(finalContent);
     }
 
-    // HARD budget cap (2026-09-30): measured 8,132 tokens against an 8,000 budget on the live
-    // store. Trim from the end until the package fits, leaving room for the unknowns line.
-    const reserve = 60;
-    while (sections.length && usedTokens > budget - reserve) {
-      const last = sections[sections.length - 1];
-      const over = (usedTokens - (budget - reserve)) * 4;
-      if (last.content.length - over < 200) { usedTokens -= estimateTokens(last.content); sections.pop(); continue; }
-      const before = estimateTokens(last.content);
-      last.content = last.content.slice(0, last.content.length - over); last.truncated = true;
-      usedTokens += estimateTokens(last.content) - before;
+    // Fill the remaining budget with the next-ranked memories (2026-09-30 A/B): the package stopped at
+    // 8 memories + decisions even with half the budget unused, and missed needed records.
+    const usedIds = new Set(sections.flatMap(x => x.memory_ids));
+    const rest = ranked.filter(m => !usedIds.has(m.id));
+    const relParts: string[] = []; const relIds: string[] = [];
+    for (const m of rest) {
+      const room = Math.floor(charBudget * 0.95) - usedTokens * 4 - relParts.reduce((n, x) => n + x.length + 2, 0);
+      if (room < 300) break;
+      relParts.push(m.content.length > room ? m.content.slice(0, room) : m.content); relIds.push(m.id);
+    }
+    if (relParts.length) {
+      const content = relParts.join('\n\n');
+      sections.push({ label: 'related', content, memory_ids: relIds, confidence: 0.6, truncated: false });
+      usedTokens += estimateTokens(content);
     }
 
     // Unknowns section (always included — anti-hallucination)
@@ -326,6 +332,19 @@ export async function handleConstructionTool(
       : coverageRatio !== null && coverageRatio < 0.7
         ? 'Coverage is below 70% — some relevant context may be missing.'
         : '';
+    const unknownsTokens = unknownsContent ? estimateTokens(unknownsContent) : 0;
+    // HARD budget cap (2026-09-30): measured 8,132 tokens against an 8,000 budget on the live
+    // store. Trim from the end until the package fits, leaving room for the unknowns line.
+    const reserve = unknownsTokens + 10;
+    while (sections.length && usedTokens > budget - reserve) {
+      const last = sections[sections.length - 1];
+      const over = (usedTokens - (budget - reserve)) * 4;
+      if (last.content.length - over < 200) { usedTokens -= estimateTokens(last.content); sections.pop(); continue; }
+      const before = estimateTokens(last.content);
+      last.content = last.content.slice(0, last.content.length - over); last.truncated = true;
+      usedTokens += estimateTokens(last.content) - before;
+    }
+
     if (unknownsContent) {
       sections.push({
         label: 'unknowns',

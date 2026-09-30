@@ -38,10 +38,11 @@ test('R1 a slow angle does not discard the angles that answered', { timeout: 40_
   assert.equal(o.retrieval_metadata.memories_included, 2);
   assert.match(o.anti_hallucination.instruction, /PARTIAL RETRIEVAL/);
   const step = o.provenance.steps.find(s => s.step === 'multi_search');
-  assert.deepEqual(step.angles.map(x => x.status).sort(), ['ok', 'ok', 'timeout']);
+  // the intent is always searched too, so four angles: intent, a, b (ok) and c (timeout)
+  assert.deepEqual(step.angles.map(x => x.status).sort(), ['ok', 'ok', 'ok', 'timeout']);
 });
 test('R1 every angle timing out is still a timeout, never empty', { timeout: 40_000 }, async () => {
-  const o = body(await prepare({ hang: ['a', 'b'] }, { queries: ['a', 'b'] }));
+  const o = body(await prepare({ hang: ['a', 'b', 'fixture add-on round under the CISO conditions'] }, { queries: ['a', 'b'] }));
   assert.equal(o.anti_hallucination.retrieval_status, 'timeout'); assert.equal(o.anti_hallucination.do_not_assert, true);
 });
 test('R2 identical content under two ids is included once, newest kept', async () => {
@@ -72,4 +73,18 @@ test('R6 a coverage timeout is recorded in provenance', { timeout: 40_000 }, asy
   const o = body(await prepare({ byQuery: { a: [mem('m1', 'x')] }, coverage: 'hang' }, { queries: ['a'] }));
   const step = o.provenance.steps.find(s => s.step === 'coverage_check');
   assert.equal(step?.status, 'timeout'); assert.equal(o.anti_hallucination.coverage_verified, false);
+});
+
+test('R7 the intent itself is always searched, and unused budget is filled with next-ranked memories', async () => {
+  const intent = 'fixture add-on round under the CISO conditions';
+  const many = Array.from({ length: 14 }, (_, i) => mem(`r${i}`, `relevant record ${i} ` + 'x'.repeat(200), 0.8 - i * 0.01));
+  const o = body(await prepare({ byQuery: { [intent]: many } }, { queries: ['unmatched keyword'] }));
+  const ids = o.context_package.sections.flatMap(s => s.memory_ids);
+  assert.ok(ids.length > 8, `only ${ids.length} memories included with budget left`);
+  assert.ok(o.context_package.sections.some(s => s.label === 'related'));
+});
+test('R8 the unknowns line counts against the hard budget', async () => {
+  const big = Array.from({ length: 12 }, (_, i) => mem(`u${i}`, `record ${i} `.repeat(500), 0.8));
+  const o = body(await prepare({ byQuery: { a: big } }, { queries: ['a'], token_budget: 2000 }));
+  assert.ok(o.context_package.token_count <= 2000, `token_count ${o.context_package.token_count}`);
 });
