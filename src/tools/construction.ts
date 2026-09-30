@@ -68,8 +68,8 @@ export const constructionTools: Tool[] = [
       properties: {
         queries: { type: 'array', items: { type: 'string' }, description: 'Explicit search queries (recommended). If omitted, queries are auto-generated from intent.' },
         intent: { type: 'string', description: 'What you are about to do — drives section prioritization' },
-        token_budget: { type: 'number', description: 'Max tokens for context package (up to 32000). Auto-scales by strategy if omitted: task_answer=4000, decision_support=6000, historical_review=8000, exploration=3000. Larger budgets also retrieve more candidates.' },
-        max_tokens_per_memory: { type: 'number', description: 'Optional: trim each included memory to its first N tokens (min 100) so more distinct memories fit the budget. Trimmed memories are marked.' },
+        token_budget: { type: 'number', description: 'Max tokens for context package (up to 32000). Auto-scales by strategy if omitted: task_answer=8000, decision_support=8000, historical_review=12000, exploration=4000. Larger budgets also retrieve more candidates.' },
+        max_tokens_per_memory: { type: 'number', description: 'Trim each included memory to its first N tokens (min 100; default 400; 0 = never trim) so more distinct memories fit the budget. Trimmed memories are marked \u2026[trimmed].' },
         strategy: { type: 'string', enum: ['task_answer', 'decision_support', 'historical_review', 'exploration'], description: 'Shapes section priority (default: task_answer)' },
         include_ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs that MUST be included' },
         exclude_ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs to exclude' },
@@ -108,7 +108,8 @@ export async function handleConstructionTool(
     const intent = args.intent as string;
     const strategy = (args.strategy as Strategy) || (intent.length < 20 ? 'exploration' : 'task_answer');
     // Build 5.1: Smart token budget — auto-scale by strategy
-    const STRATEGY_BUDGETS: Record<Strategy, number> = { task_answer: 4000, decision_support: 6000, historical_review: 8000, exploration: 3000 };
+    // task_answer 4000 → 8000 (2026-09-30, 40-task A/B: 8K + 400 tokens/memory beat plain search at the same size).
+    const STRATEGY_BUDGETS: Record<Strategy, number> = { task_answer: 8000, decision_support: 8000, historical_review: 12000, exploration: 4000 };
     // Cap raised 12000 -> 32000 (2026-09-30, 40-task A/B): the 8K package held too few of the memories a
     // task needed; a request above the old cap was silently clamped to 12K.
     const budget = Math.min((args.token_budget as number) || STRATEGY_BUDGETS[strategy], 32000);
@@ -117,7 +118,9 @@ export async function handleConstructionTool(
     const maxCandidates = Math.max(20, Math.min(60, Math.round(budget / 400)));
     const perAngleLimit = Math.max(10, Math.min(25, Math.ceil(maxCandidates / 2)));
     // Optional per-memory cap: trims each memory to its first N tokens so more distinct memories fit.
-    const perMemoryChars = (args.max_tokens_per_memory as number) > 0 ? Math.max(100, args.max_tokens_per_memory as number) * 4 : Infinity;
+    // Default 400 tokens per memory (same A/B: trimming roughly doubled the needed memories per token). 0 disables.
+    const perMemoryTokens = args.max_tokens_per_memory === undefined ? 400 : Number(args.max_tokens_per_memory);
+    const perMemoryChars = perMemoryTokens > 0 ? Math.max(100, perMemoryTokens) * 4 : Infinity;
     const clip = (c: string) => c.length > perMemoryChars ? c.slice(0, perMemoryChars) + ' …[trimmed]' : c;
     const contextTtlSec = (args.context_ttl as number) || 600;
     const contextTtlMs = contextTtlSec * 1000;

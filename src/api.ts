@@ -672,7 +672,19 @@ export function normalizeMemory(raw: RawMemory | ValidatedRawMemory): MemoryItem
       },
     } : {}),
     ...(partial ? { content_partial: partial } : {}),
+    ...(agentAuthorshipOf(raw) ? { agent_authorship: agentAuthorshipOf(raw) } : {}),
   };
+}
+
+/** Agent authorship (P1-S03), emitted ONLY when the backend declared any of it — absent never means "human". */
+function agentAuthorshipOf(raw: RawMemory | ValidatedRawMemory): import('./types.js').AgentAuthorship | undefined {
+  const r = raw as ValidatedRawMemory;
+  const a = {
+    agent_authored: r.agent_authored, principal_type: r.author_principal_type, principal_id: r.author_principal_id,
+    key_id: r.author_key_id, workspace_id: r.author_workspace_id, request_id: r.author_request_id, created_at: r.author_created_at,
+  };
+  const present = Object.fromEntries(Object.entries(a).filter(([, v]) => v !== undefined));
+  return Object.keys(present).length ? present as import('./types.js').AgentAuthorship : undefined;
 }
 
 /**
