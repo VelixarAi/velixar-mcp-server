@@ -68,7 +68,8 @@ export const constructionTools: Tool[] = [
       properties: {
         queries: { type: 'array', items: { type: 'string' }, description: 'Explicit search queries (recommended). If omitted, queries are auto-generated from intent.' },
         intent: { type: 'string', description: 'What you are about to do — drives section prioritization' },
-        token_budget: { type: 'number', description: 'Max tokens for context package. Auto-scales by strategy if omitted: task_answer=4000, decision_support=6000, historical_review=8000, exploration=3000.' },
+        token_budget: { type: 'number', description: 'Max tokens for context package (up to 32000). Auto-scales by strategy if omitted: task_answer=8000, decision_support=8000, historical_review=12000, exploration=4000. Larger budgets also retrieve more candidates.' },
+        max_tokens_per_memory: { type: 'number', description: 'Trim each included memory to its first N tokens (min 100; default 400; 0 = never trim) so more distinct memories fit the budget. Trimmed memories are marked \u2026[trimmed].' },
         strategy: { type: 'string', enum: ['task_answer', 'decision_support', 'historical_review', 'exploration'], description: 'Shapes section priority (default: task_answer)' },
         include_ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs that MUST be included' },
         exclude_ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs to exclude' },
@@ -107,8 +108,20 @@ export async function handleConstructionTool(
     const intent = args.intent as string;
     const strategy = (args.strategy as Strategy) || (intent.length < 20 ? 'exploration' : 'task_answer');
     // Build 5.1: Smart token budget — auto-scale by strategy
-    const STRATEGY_BUDGETS: Record<Strategy, number> = { task_answer: 4000, decision_support: 6000, historical_review: 8000, exploration: 3000 };
-    const budget = Math.min((args.token_budget as number) || STRATEGY_BUDGETS[strategy], 12000);
+    // task_answer 4000 → 8000 (2026-09-30, 40-task A/B: 8K + 400 tokens/memory beat plain search at the same size).
+    const STRATEGY_BUDGETS: Record<Strategy, number> = { task_answer: 8000, decision_support: 8000, historical_review: 12000, exploration: 4000 };
+    // Cap raised 12000 -> 32000 (2026-09-30, 40-task A/B): the 8K package held too few of the memories a
+    // task needed; a request above the old cap was silently clamped to 12K.
+    const budget = Math.min((args.token_budget as number) || STRATEGY_BUDGETS[strategy], 32000);
+    // Candidate pool scales with the budget (~1 candidate per 400 tokens, 20..60): a fixed top-20 merge
+    // capped a large budget at 20 memories whatever it could hold.
+    const maxCandidates = Math.max(20, Math.min(60, Math.round(budget / 400)));
+    const perAngleLimit = Math.max(10, Math.min(25, Math.ceil(maxCandidates / 2)));
+    // Optional per-memory cap: trims each memory to its first N tokens so more distinct memories fit.
+    // Default 400 tokens per memory (same A/B: trimming roughly doubled the needed memories per token). 0 disables.
+    const perMemoryTokens = args.max_tokens_per_memory === undefined ? 400 : Number(args.max_tokens_per_memory);
+    const perMemoryChars = perMemoryTokens > 0 ? Math.max(100, perMemoryTokens) * 4 : Infinity;
+    const clip = (c: string) => c.length > perMemoryChars ? c.slice(0, perMemoryChars) + ' …[trimmed]' : c;
     const contextTtlSec = (args.context_ttl as number) || 600;
     const contextTtlMs = contextTtlSec * 1000;
     const includeIds = new Set((args.include_ids as string[]) || []);
@@ -141,7 +154,9 @@ export async function handleConstructionTool(
     const explicitQueries = args.queries as string[] | undefined;
     let angles: string[];
     if (explicitQueries?.length) {
-      angles = [...new Set(explicitQueries.map(q => q.trim()).filter(Boolean))].slice(0, 5);
+      // The intent itself is always an angle (2026-09-30 A/B): a single meaning search on the full
+      // task description beat the keyword angles alone on recall and precision.
+      angles = [...new Set([intent.trim(), ...explicitQueries.map(q => q.trim())].filter(Boolean))].slice(0, 5);
     } else {
       const intentClean = intent.replace(/[?!.]+$/g, '').trim();
       const significant = intentClean.split(/\s+/).filter(w =>
@@ -156,7 +171,7 @@ export async function handleConstructionTool(
     try {
       const settled = await Promise.all(angles.map(async q => {
         const t0 = Date.now();
-        const params = userParams(config, { q, limit: '10' });
+        const params = userParams(config, { q, limit: String(perAngleLimit) });
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const r = await Promise.race([
@@ -185,7 +200,7 @@ export async function handleConstructionTool(
         } catch { return { query, memories: [] as MemoryItem[] }; }
       });
 
-      const { merged } = mergeMultiQueryResults(perQuery, 'weighted', 20);
+      const { merged } = mergeMultiQueryResults(perQuery, 'weighted', maxCandidates);
       allMemories = merged;
       provenanceLog.push({ step: 'multi_search', status: retrievalStatus, queries: angles, angles: angleStatus, results: merged.length, ms: Date.now() - searchStart });
     } catch (e) {
@@ -285,7 +300,8 @@ export async function handleConstructionTool(
     for (const m of ranked.slice(0, 8)) {
       const room = stateBudget - stateChars;
       if (room < 200) { stateTruncated = true; break; }
-      const c = m.content.length > room ? m.content.slice(0, room) : m.content;
+      const full = clip(m.content);
+      const c = full.length > room ? full.slice(0, room) : full;
       if (c.length < m.content.length) stateTruncated = true;
       stateParts.push(c); stateIds.push(m.id); stateChars += c.length + 2;
     }
@@ -300,23 +316,28 @@ export async function handleConstructionTool(
     const included = new Set(stateIds);
     const decisions = ranked.filter(m => !included.has(m.id) && /\b(decided|decision|chose|going with|ruling|ruled)\b/i.test(m.content));
     if (decisions.length > 0 && usedTokens * 4 < charBudget * 0.9) {
-      const decContent = decisions.slice(0, 5).map(m => m.content).join('\n\n');
+      const decContent = decisions.slice(0, 5).map(m => clip(m.content)).join('\n\n');
       const finalContent = decContent.slice(0, Math.max(200, charBudget - usedTokens * 4));
       sections.push({ label: 'key_decisions', content: finalContent, memory_ids: decisions.slice(0, 5).map(m => m.id),
         confidence: 0.85, truncated: finalContent.length < decContent.length });
       usedTokens += estimateTokens(finalContent);
     }
 
-    // HARD budget cap (2026-09-30): measured 8,132 tokens against an 8,000 budget on the live
-    // store. Trim from the end until the package fits, leaving room for the unknowns line.
-    const reserve = 60;
-    while (sections.length && usedTokens > budget - reserve) {
-      const last = sections[sections.length - 1];
-      const over = (usedTokens - (budget - reserve)) * 4;
-      if (last.content.length - over < 200) { usedTokens -= estimateTokens(last.content); sections.pop(); continue; }
-      const before = estimateTokens(last.content);
-      last.content = last.content.slice(0, last.content.length - over); last.truncated = true;
-      usedTokens += estimateTokens(last.content) - before;
+    // Fill the remaining budget with the next-ranked memories (2026-09-30 A/B): the package stopped at
+    // 8 memories + decisions even with half the budget unused, and missed needed records.
+    const usedIds = new Set(sections.flatMap(x => x.memory_ids));
+    const rest = ranked.filter(m => !usedIds.has(m.id));
+    const relParts: string[] = []; const relIds: string[] = [];
+    for (const m of rest) {
+      const room = Math.floor(charBudget * 0.95) - usedTokens * 4 - relParts.reduce((n, x) => n + x.length + 2, 0);
+      if (room < 300) break;
+      const full = clip(m.content);
+      relParts.push(full.length > room ? full.slice(0, room) : full); relIds.push(m.id);
+    }
+    if (relParts.length) {
+      const content = relParts.join('\n\n');
+      sections.push({ label: 'related', content, memory_ids: relIds, confidence: 0.6, truncated: false });
+      usedTokens += estimateTokens(content);
     }
 
     // Unknowns section (always included — anti-hallucination)
@@ -326,6 +347,19 @@ export async function handleConstructionTool(
       : coverageRatio !== null && coverageRatio < 0.7
         ? 'Coverage is below 70% — some relevant context may be missing.'
         : '';
+    const unknownsTokens = unknownsContent ? estimateTokens(unknownsContent) : 0;
+    // HARD budget cap (2026-09-30): measured 8,132 tokens against an 8,000 budget on the live
+    // store. Trim from the end until the package fits, leaving room for the unknowns line.
+    const reserve = unknownsTokens + 10;
+    while (sections.length && usedTokens > budget - reserve) {
+      const last = sections[sections.length - 1];
+      const over = (usedTokens - (budget - reserve)) * 4;
+      if (last.content.length - over < 200) { usedTokens -= estimateTokens(last.content); sections.pop(); continue; }
+      const before = estimateTokens(last.content);
+      last.content = last.content.slice(0, last.content.length - over); last.truncated = true;
+      usedTokens += estimateTokens(last.content) - before;
+    }
+
     if (unknownsContent) {
       sections.push({
         label: 'unknowns',

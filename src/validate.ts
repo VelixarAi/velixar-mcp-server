@@ -49,6 +49,14 @@ export interface ValidatedRawMemory {
    *  edge. It was being dropped here entirely, which is half of why the client then
    *  invented one from previous_memory_id. */
   references?: string[];
+  /** Agent authorship from governed agent principals (P1-S03). Absent = the backend did not say; never assume human. */
+  agent_authored?: boolean;
+  author_principal_type?: string;
+  author_principal_id?: string;
+  author_key_id?: string;
+  author_workspace_id?: string;
+  author_request_id?: string;
+  author_created_at?: string;
   /** Empty references is a first-class auditable state: learned fresh, no prior context. */
   is_origin?: boolean;
   /** The backend's authoritative provenance CLASS (user | agent | upload | session |
@@ -148,6 +156,15 @@ function validateRawMemory(m: unknown, endpoint: string): ValidatedRawMemory | n
     superseded_by: str(o.superseded_by),
     supersession_status: str(o.supersession_status),
     superseded_reason: str(o.superseded_reason),
+    // Agent authorship (P1-S03 governed agent principals). These were dropped here, so an agent-authored
+    // memory reached clients looking human-authored. Pass through only well-typed values; never default.
+    agent_authored: typeof o.agent_authored === 'boolean' ? o.agent_authored : undefined,
+    author_principal_type: str(o.author_principal_type),
+    author_principal_id: str(o.author_principal_id),
+    author_key_id: str(o.author_key_id),
+    author_workspace_id: str(o.author_workspace_id),
+    author_request_id: str(o.author_request_id),
+    author_created_at: str(o.author_created_at),
   };
 }
 

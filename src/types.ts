@@ -92,6 +92,17 @@ export interface MemoryOrigin {
   stamped: boolean;
 }
 
+/** Server-stamped agent authorship for memories written by a governed agent principal (P1-S03). */
+export interface AgentAuthorship {
+  agent_authored?: boolean;
+  principal_type?: string;
+  principal_id?: string;
+  key_id?: string;
+  workspace_id?: string;
+  request_id?: string;
+  created_at?: string;
+}
+
 export interface MemoryItem {
   id: string;
   workspace_id: string;
@@ -125,6 +136,8 @@ export interface MemoryItem {
    * a listing returned 1,096 chars of a 2,900-char record with no ellipsis and no flag.
    */
   content_partial?: ContentPartial;
+  /** Present only when the backend declared agent authorship. */
+  agent_authorship?: AgentAuthorship;
 }
 
 /** Why `content` is short, and what to call to get the rest. */
