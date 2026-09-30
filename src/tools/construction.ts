@@ -125,18 +125,23 @@ export async function handleConstructionTool(
     // recorded `results: 0` — a slow search became indistinguishable from an empty corpus.
     // Verified in prod 2026-07-31: memories_considered 0 at request_ms 3103, on a
     // 2670-memory workspace where velixar_search returned 10 hits immediately.
-    const INTERNAL_TIMEOUT = 10000;
-    // A sentinel, not []. The whole defect was that the timeout produced a value the happy
-    // path could not tell apart from "nothing matched".
+    // PER-ANGLE deadlines (2026-09-30). The single Promise.race over allSettled was
+    // all-or-nothing: one slow angle past 10s discarded EVERY angle, including the ones that
+    // had already answered. Measured: 5 explicit queries -> retrieval_status timeout, 0
+    // memories; the same intent with 2 queries -> 14 memories in 3.3s. Each angle now races
+    // its own deadline; answered angles are kept, and a lookup with some angles missing is
+    // PARTIAL (never complete, never empty).
+    const PER_ANGLE_TIMEOUT = 12000;
     const TIMED_OUT = Symbol('retrieval_timeout');
-    let retrievalStatus: 'ok' | 'timeout' | 'error' = 'ok';
+    let retrievalStatus: 'ok' | 'partial' | 'timeout' | 'error' = 'ok';
+    const angleStatus: Array<{ query: string; status: 'ok' | 'timeout' | 'error'; ms: number }> = [];
 
-    // Step 1: Multi-angle retrieval (with timeout)
+    // Step 1: Multi-angle retrieval (per-angle deadlines)
     // Prefer explicit queries from LLM (they know the vocabulary); fall back to intent extraction
     const explicitQueries = args.queries as string[] | undefined;
     let angles: string[];
     if (explicitQueries?.length) {
-      angles = explicitQueries.slice(0, 5);
+      angles = [...new Set(explicitQueries.map(q => q.trim()).filter(Boolean))].slice(0, 5);
     } else {
       const intentClean = intent.replace(/[?!.]+$/g, '').trim();
       const significant = intentClean.split(/\s+/).filter(w =>
@@ -149,49 +154,40 @@ export async function handleConstructionTool(
 
     let allMemories: MemoryItem[] = [];
     try {
-      const searchResults = await Promise.race([
-        Promise.allSettled(
-          angles.map(q => {
-            const params = userParams(config, { q, limit: '10' });
-            return api.get<unknown>(`/memory/search?${params}`, true);
-          }),
-        ),
-        new Promise<typeof TIMED_OUT>(resolve =>
-          setTimeout(() => resolve(TIMED_OUT), INTERNAL_TIMEOUT)
-        ),
-      ]);
-
-      if (searchResults === TIMED_OUT) {
-        retrievalStatus = 'timeout';
-        provenanceLog.push({ step: 'multi_search', status: 'timeout', queries: angles, ms: INTERNAL_TIMEOUT });
-      }
-
-      const settled = searchResults === TIMED_OUT ? [] : searchResults as PromiseSettledResult<unknown>[];
-      // allSettled NEVER throws, so the outer catch cannot see a failed search. If EVERY
-      // angle rejected, that is a failed lookup, not an empty corpus — the same defect as
-      // the timeout, one layer down, and it was found by the falsifier for the timeout.
-      const rejectedCount = settled.filter(r => r.status === 'rejected').length;
-      if (settled.length > 0 && rejectedCount === settled.length) {
-        retrievalStatus = 'error';
-        provenanceLog.push({ step: 'multi_search', status: 'error', detail: 'every query angle failed', queries: angles });
-      }
-
-      const perQuery = settled.map((r, i) => {
-        if (r.status !== 'fulfilled') return { query: angles[i], memories: [] as MemoryItem[] };
+      const settled = await Promise.all(angles.map(async q => {
+        const t0 = Date.now();
+        const params = userParams(config, { q, limit: '10' });
+        let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          const validated = validateSearchResponse(r.value, '/memory/search');
-          return {
-            query: angles[i],
-            memories: validated.memories.map(m => { const mem = normalizeMemory(m); mem.workspace_id = config.workspaceId; return mem; }),
-          };
-        } catch { return { query: angles[i], memories: [] as MemoryItem[] }; }
+          const r = await Promise.race([
+            api.get<unknown>(`/memory/search?${params}`, true),
+            new Promise<typeof TIMED_OUT>(resolve => { timer = setTimeout(() => resolve(TIMED_OUT), PER_ANGLE_TIMEOUT); }),
+          ]);
+          if (r === TIMED_OUT) { angleStatus.push({ query: q, status: 'timeout', ms: Date.now() - t0 }); return { query: q, raw: null as unknown }; }
+          angleStatus.push({ query: q, status: 'ok', ms: Date.now() - t0 });
+          return { query: q, raw: r as unknown };
+        } catch {
+          angleStatus.push({ query: q, status: 'error', ms: Date.now() - t0 });
+          return { query: q, raw: null as unknown };
+        } finally { if (timer) clearTimeout(timer); }
+      }));
+      const okCount = angleStatus.filter(a => a.status === 'ok').length;
+      const timeoutCount = angleStatus.filter(a => a.status === 'timeout').length;
+      retrievalStatus = okCount === angles.length ? 'ok'
+        : okCount > 0 ? 'partial'
+        : timeoutCount > 0 ? 'timeout' : 'error';
+
+      const perQuery = settled.map(({ query, raw }) => {
+        if (raw == null) return { query, memories: [] as MemoryItem[] };
+        try {
+          const validated = validateSearchResponse(raw, '/memory/search');
+          return { query, memories: validated.memories.map(m => { const mem = normalizeMemory(m); mem.workspace_id = config.workspaceId; return mem; }) };
+        } catch { return { query, memories: [] as MemoryItem[] }; }
       });
 
       const { merged } = mergeMultiQueryResults(perQuery, 'weighted', 20);
       allMemories = merged;
-      if (retrievalStatus === 'ok') {
-        provenanceLog.push({ step: 'multi_search', queries: angles, results: merged.length, ms: Date.now() - searchStart });
-      }
+      provenanceLog.push({ step: 'multi_search', status: retrievalStatus, queries: angles, angles: angleStatus, results: merged.length, ms: Date.now() - searchStart });
     } catch (e) {
       retrievalStatus = 'error';
       provenanceLog.push({ step: 'multi_search', status: 'error', detail: String(e), ms: Date.now() - searchStart });
@@ -216,6 +212,34 @@ export async function handleConstructionTool(
     // Remove excludes
     allMemories = allMemories.filter(m => !excludeIds.has(m.id));
 
+    // DE-DUPLICATE identical content (2026-09-30). The store can hold the same text under two
+    // ids (duplicate-write defect); the package then spent budget on it twice. Only IDENTICAL
+    // normalized content is merged — near-duplicates stay distinct — and the newest id is kept.
+    const byContent = new Map<string, MemoryItem>();
+    const duplicateIds: string[] = [];
+    const norm = (c: string) => (c || '').replace(/\s+/g, ' ').trim();
+    for (const m of allMemories) {
+      const k = norm(m.content);
+      const prev = byContent.get(k);
+      if (!prev) { byContent.set(k, m); continue; }
+      const keepNew = includeIds.has(m.id) || (!includeIds.has(prev.id) && String(m.provenance?.created_at ?? '') > String(prev.provenance?.created_at ?? ''));
+      duplicateIds.push(keepNew ? prev.id : m.id);
+      if (keepNew) byContent.set(k, { ...m, relevance: Math.max(m.relevance ?? 0, prev.relevance ?? 0) });
+    }
+    allMemories = [...byContent.values()];
+    if (duplicateIds.length) provenanceLog.push({ step: 'dedupe', removed: duplicateIds.length, removed_ids: duplicateIds });
+
+    // RELEVANCE FLOOR relative to the best match (2026-09-30): the merged top-20 admitted
+    // weak matches (an unrelated review rode in on a shared word). Forced includes bypass it.
+    const RELEVANCE_FLOOR = 0.55;
+    const top = Math.max(0, ...allMemories.map(m => m.relevance ?? 0));
+    const belowFloor = top > 0 ? allMemories.filter(m => !includeIds.has(m.id) && (m.relevance ?? 0) < RELEVANCE_FLOOR * top) : [];
+    if (belowFloor.length) {
+      const drop = new Set(belowFloor.map(m => m.id));
+      allMemories = allMemories.filter(m => !drop.has(m.id));
+      provenanceLog.push({ step: 'relevance_floor', floor_ratio: RELEVANCE_FLOOR, top_relevance: top, removed: belowFloor.length, removed_ids: [...drop] });
+    }
+
     // Step 2: Temporal merge
     const temporal = temporalMerge(allMemories);
     const currentMemories = temporal.current;
@@ -226,10 +250,14 @@ export async function handleConstructionTool(
     let gaps: Array<{ id: string; preview: string; relevance: number }> = [];
     let suggestedQueries: string[] = [];
     try {
+      const covStart = Date.now();
       const covRaw = await Promise.race([
         api.post<unknown>('/memory/coverage', { topic: intent, memory_ids: currentMemories.map(m => m.id) }),
-        new Promise<null>(resolve => setTimeout(() => resolve(null), 2000)),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), 5000)),
       ]);
+      // A timeout used to resolve null and leave NO provenance entry, so "coverage unavailable"
+      // had no recorded cause. Every outcome is logged now.
+      if (!covRaw) provenanceLog.push({ step: 'coverage_check', status: 'timeout', ms: Date.now() - covStart });
       if (covRaw) {
         const cov = validateCoverageResponse(covRaw, '/memory/coverage');
         coverageRatio = cov.coverage_ratio;
@@ -237,49 +265,58 @@ export async function handleConstructionTool(
         suggestedQueries = cov.suggested_queries;
         provenanceLog.push({ step: 'coverage_check', ratio: coverageRatio, gaps: gaps.length });
       }
-    } catch {
-      // Fallback: estimate from search
+    } catch (e) {
       coverageRatio = null;
-      provenanceLog.push({ step: 'coverage_check', status: 'unavailable' });
+      provenanceLog.push({ step: 'coverage_check', status: 'unavailable', detail: String(e).slice(0, 160) });
     }
 
     // Step 4: Build sections by strategy priority
     const sectionOrder = SECTION_PRIORITY[strategy];
     const sections: Array<{ label: string; content: string; memory_ids: string[]; confidence: number; truncated: boolean }> = [];
     let usedTokens = 0;
-    const charBudget = budget * 4;
 
-    // Current state section
-    const currentContent = currentMemories.slice(0, 8).map(m => m.content).join('\n\n');
-    if (currentContent) {
-      const tokens = estimateTokens(currentContent);
-      const truncated = usedTokens + tokens > charBudget / 4 && sections.length > 0;
-      const finalContent = truncated ? currentContent.slice(0, Math.max(200, (charBudget - usedTokens * 4))) : currentContent;
-      sections.push({
-        label: 'current_state',
-        content: finalContent,
-        memory_ids: currentMemories.slice(0, 8).map(m => m.id),
-        confidence: coverageRatio !== null ? Math.min(0.95, coverageRatio + 0.1) : 0.7,
-        truncated,
-      });
+    // Current state section — memories in relevance order until the budget share is used.
+    // The old code joined the top 8 whole and could never truncate the FIRST section, so the
+    // package could exceed its token budget.
+    const charBudget = budget * 4;
+    const ranked = [...currentMemories].sort((a, b) => (b.relevance ?? 0) - (a.relevance ?? 0));
+    const stateBudget = Math.floor(charBudget * 0.75);
+    const stateParts: string[] = []; const stateIds: string[] = []; let stateChars = 0; let stateTruncated = false;
+    for (const m of ranked.slice(0, 8)) {
+      const room = stateBudget - stateChars;
+      if (room < 200) { stateTruncated = true; break; }
+      const c = m.content.length > room ? m.content.slice(0, room) : m.content;
+      if (c.length < m.content.length) stateTruncated = true;
+      stateParts.push(c); stateIds.push(m.id); stateChars += c.length + 2;
+    }
+    if (stateParts.length) {
+      const content = stateParts.join('\n\n');
+      sections.push({ label: 'current_state', content, memory_ids: stateIds,
+        confidence: coverageRatio !== null ? Math.min(0.95, coverageRatio + 0.1) : 0.7, truncated: stateTruncated });
+      usedTokens += estimateTokens(content);
+    }
+
+    // Decisions section — never repeats a memory already in current_state.
+    const included = new Set(stateIds);
+    const decisions = ranked.filter(m => !included.has(m.id) && /\b(decided|decision|chose|going with|ruling|ruled)\b/i.test(m.content));
+    if (decisions.length > 0 && usedTokens * 4 < charBudget * 0.9) {
+      const decContent = decisions.slice(0, 5).map(m => m.content).join('\n\n');
+      const finalContent = decContent.slice(0, Math.max(200, charBudget - usedTokens * 4));
+      sections.push({ label: 'key_decisions', content: finalContent, memory_ids: decisions.slice(0, 5).map(m => m.id),
+        confidence: 0.85, truncated: finalContent.length < decContent.length });
       usedTokens += estimateTokens(finalContent);
     }
 
-    // Decisions section
-    const decisions = currentMemories.filter(m =>
-      /\b(decided|decision|chose|going with)\b/i.test(m.content)
-    );
-    if (decisions.length > 0 && usedTokens * 4 < charBudget * 0.8) {
-      const decContent = decisions.slice(0, 5).map(m => m.content).join('\n\n');
-      const finalContent = decContent.slice(0, Math.max(200, charBudget - usedTokens * 4));
-      sections.push({
-        label: 'key_decisions',
-        content: finalContent,
-        memory_ids: decisions.slice(0, 5).map(m => m.id),
-        confidence: 0.85,
-        truncated: finalContent.length < decContent.length,
-      });
-      usedTokens += estimateTokens(finalContent);
+    // HARD budget cap (2026-09-30): measured 8,132 tokens against an 8,000 budget on the live
+    // store. Trim from the end until the package fits, leaving room for the unknowns line.
+    const reserve = 60;
+    while (sections.length && usedTokens > budget - reserve) {
+      const last = sections[sections.length - 1];
+      const over = (usedTokens - (budget - reserve)) * 4;
+      if (last.content.length - over < 200) { usedTokens -= estimateTokens(last.content); sections.pop(); continue; }
+      const before = estimateTokens(last.content);
+      last.content = last.content.slice(0, last.content.length - over); last.truncated = true;
+      usedTokens += estimateTokens(last.content) - before;
     }
 
     // Unknowns section (always included — anti-hallucination)
@@ -321,7 +358,9 @@ export async function handleConstructionTool(
           memories_considered: allMemories.length + (excludeIds.size),
           memories_included: currentMemories.length,
           memories_excluded_superseded: temporal.superseded.length,
-          memories_excluded_budget: Math.max(0, currentMemories.length - 8),
+          memories_excluded_budget: Math.max(0, currentMemories.length - sections.reduce((n, x) => n + x.memory_ids.length, 0)),
+          duplicates_removed: duplicateIds.length,
+          below_relevance_floor: belowFloor.length,
           coverage_ratio: coverageRatio,
           temporal_span: {
             from: temporal.temporal_context.oldest_memory,
@@ -346,7 +385,10 @@ export async function handleConstructionTool(
           const coverageKnown = coverageRatio !== null;
           let instruction: string;
           let doNotAssert = false;
-          if (retrievalStatus !== 'ok') {
+          if (retrievalStatus === 'partial') {
+            const missing = angleStatus.filter(a => a.status !== 'ok').map(a => a.query);
+            instruction = `PARTIAL RETRIEVAL: ${missing.length} of ${angles.length} query angles did not answer (${missing.join('; ')}). What is here is real but incomplete — qualify the answer and do not treat missing topics as absent.`;
+          } else if (retrievalStatus !== 'ok') {
             doNotAssert = true;
             instruction = `RETRIEVAL DID NOT COMPLETE (${retrievalStatus}). This is NOT an empty corpus — it is an unfinished lookup. Do not treat this as evidence of absence, and do not answer from it. Retry, or narrow the intent.`;
           } else if (evidenceCount === 0) {
@@ -380,8 +422,8 @@ export async function handleConstructionTool(
         // page with a live cursor being reported as data_absent.
         data_absent: retrievalStatus === 'ok' && currentMemories.length === 0,
         ...(retrievalStatus !== 'ok' ? { absence_reason: 'retrieval_incomplete' as const } : {}),
-        // Unknown coverage is partial context, not full context.
-        partial_context: coverageRatio === null || coverageRatio < 0.5,
+        // Unknown coverage, or any angle that did not answer, is partial context.
+        partial_context: retrievalStatus !== 'ok' || coverageRatio === null || coverageRatio < 0.5,
       })),
     };
   }
