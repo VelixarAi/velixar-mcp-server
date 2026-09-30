@@ -68,7 +68,8 @@ export const constructionTools: Tool[] = [
       properties: {
         queries: { type: 'array', items: { type: 'string' }, description: 'Explicit search queries (recommended). If omitted, queries are auto-generated from intent.' },
         intent: { type: 'string', description: 'What you are about to do — drives section prioritization' },
-        token_budget: { type: 'number', description: 'Max tokens for context package. Auto-scales by strategy if omitted: task_answer=4000, decision_support=6000, historical_review=8000, exploration=3000.' },
+        token_budget: { type: 'number', description: 'Max tokens for context package (up to 32000). Auto-scales by strategy if omitted: task_answer=4000, decision_support=6000, historical_review=8000, exploration=3000. Larger budgets also retrieve more candidates.' },
+        max_tokens_per_memory: { type: 'number', description: 'Optional: trim each included memory to its first N tokens (min 100) so more distinct memories fit the budget. Trimmed memories are marked.' },
         strategy: { type: 'string', enum: ['task_answer', 'decision_support', 'historical_review', 'exploration'], description: 'Shapes section priority (default: task_answer)' },
         include_ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs that MUST be included' },
         exclude_ids: { type: 'array', items: { type: 'string' }, description: 'Memory IDs to exclude' },
@@ -108,7 +109,16 @@ export async function handleConstructionTool(
     const strategy = (args.strategy as Strategy) || (intent.length < 20 ? 'exploration' : 'task_answer');
     // Build 5.1: Smart token budget — auto-scale by strategy
     const STRATEGY_BUDGETS: Record<Strategy, number> = { task_answer: 4000, decision_support: 6000, historical_review: 8000, exploration: 3000 };
-    const budget = Math.min((args.token_budget as number) || STRATEGY_BUDGETS[strategy], 12000);
+    // Cap raised 12000 -> 32000 (2026-09-30, 40-task A/B): the 8K package held too few of the memories a
+    // task needed; a request above the old cap was silently clamped to 12K.
+    const budget = Math.min((args.token_budget as number) || STRATEGY_BUDGETS[strategy], 32000);
+    // Candidate pool scales with the budget (~1 candidate per 400 tokens, 20..60): a fixed top-20 merge
+    // capped a large budget at 20 memories whatever it could hold.
+    const maxCandidates = Math.max(20, Math.min(60, Math.round(budget / 400)));
+    const perAngleLimit = Math.max(10, Math.min(25, Math.ceil(maxCandidates / 2)));
+    // Optional per-memory cap: trims each memory to its first N tokens so more distinct memories fit.
+    const perMemoryChars = (args.max_tokens_per_memory as number) > 0 ? Math.max(100, args.max_tokens_per_memory as number) * 4 : Infinity;
+    const clip = (c: string) => c.length > perMemoryChars ? c.slice(0, perMemoryChars) + ' …[trimmed]' : c;
     const contextTtlSec = (args.context_ttl as number) || 600;
     const contextTtlMs = contextTtlSec * 1000;
     const includeIds = new Set((args.include_ids as string[]) || []);
@@ -158,7 +168,7 @@ export async function handleConstructionTool(
     try {
       const settled = await Promise.all(angles.map(async q => {
         const t0 = Date.now();
-        const params = userParams(config, { q, limit: '10' });
+        const params = userParams(config, { q, limit: String(perAngleLimit) });
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const r = await Promise.race([
@@ -187,7 +197,7 @@ export async function handleConstructionTool(
         } catch { return { query, memories: [] as MemoryItem[] }; }
       });
 
-      const { merged } = mergeMultiQueryResults(perQuery, 'weighted', 20);
+      const { merged } = mergeMultiQueryResults(perQuery, 'weighted', maxCandidates);
       allMemories = merged;
       provenanceLog.push({ step: 'multi_search', status: retrievalStatus, queries: angles, angles: angleStatus, results: merged.length, ms: Date.now() - searchStart });
     } catch (e) {
@@ -287,7 +297,8 @@ export async function handleConstructionTool(
     for (const m of ranked.slice(0, 8)) {
       const room = stateBudget - stateChars;
       if (room < 200) { stateTruncated = true; break; }
-      const c = m.content.length > room ? m.content.slice(0, room) : m.content;
+      const full = clip(m.content);
+      const c = full.length > room ? full.slice(0, room) : full;
       if (c.length < m.content.length) stateTruncated = true;
       stateParts.push(c); stateIds.push(m.id); stateChars += c.length + 2;
     }
@@ -302,7 +313,7 @@ export async function handleConstructionTool(
     const included = new Set(stateIds);
     const decisions = ranked.filter(m => !included.has(m.id) && /\b(decided|decision|chose|going with|ruling|ruled)\b/i.test(m.content));
     if (decisions.length > 0 && usedTokens * 4 < charBudget * 0.9) {
-      const decContent = decisions.slice(0, 5).map(m => m.content).join('\n\n');
+      const decContent = decisions.slice(0, 5).map(m => clip(m.content)).join('\n\n');
       const finalContent = decContent.slice(0, Math.max(200, charBudget - usedTokens * 4));
       sections.push({ label: 'key_decisions', content: finalContent, memory_ids: decisions.slice(0, 5).map(m => m.id),
         confidence: 0.85, truncated: finalContent.length < decContent.length });
@@ -317,7 +328,8 @@ export async function handleConstructionTool(
     for (const m of rest) {
       const room = Math.floor(charBudget * 0.95) - usedTokens * 4 - relParts.reduce((n, x) => n + x.length + 2, 0);
       if (room < 300) break;
-      relParts.push(m.content.length > room ? m.content.slice(0, room) : m.content); relIds.push(m.id);
+      const full = clip(m.content);
+      relParts.push(full.length > room ? full.slice(0, room) : full); relIds.push(m.id);
     }
     if (relParts.length) {
       const content = relParts.join('\n\n');
