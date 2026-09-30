@@ -65,7 +65,7 @@ jobs:
           # made 1.6.9 report FAILURE on a publish that had fully succeeded (it appeared
           # ~20s later), and a red run on a good release teaches everyone to ignore this step.
           for i in $(seq 1 30); do
-            PUBLISHED=$(npm view "velixar-mcp-server@$VERSION" version 2>/dev/null)
+            PUBLISHED=$(npm view "velixar-mcp-server@$VERSION" version 2>/dev/null || true)
             [ "$PUBLISHED" = "$VERSION" ] && break
             sleep 10
           done
